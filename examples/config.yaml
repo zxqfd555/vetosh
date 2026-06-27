@@ -1,0 +1,55 @@
+# vetosh universal config
+# One file can configure both the indexer and the server. Credentials are pulled
+# from the environment via ${ENV_VAR} interpolation — never hardcode secrets.
+
+pathway_license_key: ${PATHWAY_LICENSE_KEY}
+
+sources:
+  - type: fs
+    path: /data/documents
+    glob: "**/*"
+  # Google Drive (only_metadata) — requires a service-account JSON key:
+  # - type: gdrive
+  #   object_id: ${GDRIVE_FOLDER_ID}
+  #   service_user_credentials_file: ${GDRIVE_CREDENTIALS_FILE}
+  #   file_name_pattern: "*.pdf"
+
+vector_db:
+  type: pgvector # or: milvus
+  connection_string: postgresql://user:pass@localhost/db
+  table: vetosh_embeddings
+  # for milvus:
+  # type: milvus
+  # host: localhost
+  # port: 19530
+  # collection: vetosh_embeddings
+
+embedder:
+  type: openai # or any xpack-supported embedder
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+
+splitter:
+  type: token_count
+  chunk_size: 512
+  chunk_overlap: 50
+
+persistence:
+  enabled: true
+  backend: filesystem
+  path: /var/vetosh/persistence
+
+server:
+  host: 0.0.0.0
+  port: 8000
+
+frontend: # web chat UI; proxies to the API at api_url (run with `vetosh frontend`)
+  host: 0.0.0.0
+  port: 3000
+  api_url: http://localhost:8000
+  title: vetosh
+
+llm: # optional, for the /rag endpoint
+  type: openai
+  model: gpt-4o-mini
+  api_key: ${OPENAI_API_KEY}

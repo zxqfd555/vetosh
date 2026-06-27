@@ -1,0 +1,89 @@
+"""Tests for the web chat frontend (page serving + API proxying)."""
+
+from __future__ import annotations
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from vetosh.config.schema import FrontendConfig, VetoshConfig
+from vetosh.frontend.main import create_app
+
+
+def _mock_upstream(handler) -> httpx.AsyncClient:
+    """An httpx client whose requests are served by ``handler`` (no network)."""
+
+    return httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://api.test"
+    )
+
+
+def _config(**kw) -> VetoshConfig:
+    return VetoshConfig(frontend=FrontendConfig(title="MyBot", **kw))
+
+
+def test_serves_chat_page():
+    with TestClient(create_app(_config())) as client:
+        resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    # Title is injected into the page.
+    assert "MyBot" in resp.text
+    assert "__APP_TITLE__" not in resp.text
+
+
+def test_config_endpoint_reports_api_url():
+    with TestClient(create_app(_config(api_url="http://server:8000"))) as client:
+        body = client.get("/api/config").json()
+    assert body == {"title": "MyBot", "api_url": "http://server:8000"}
+
+
+def test_proxies_rag_to_upstream():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        captured["url"] = str(request.url)
+        captured["body"] = _json.loads(request.content)
+        return httpx.Response(
+            200, json={"answer": "42", "sources": [{"text": "ctx", "metadata": {}, "score": 0.9}]}
+        )
+
+    app = create_app(_config(), client=_mock_upstream(handler))
+    with TestClient(app) as client:
+        resp = client.post("/api/rag", json={"query": "meaning?", "k": 3})
+
+    assert resp.status_code == 200
+    assert resp.json()["answer"] == "42"
+    assert captured["url"].endswith("/rag")
+    assert captured["body"] == {"query": "meaning?", "k": 3}
+
+
+def test_proxy_forwards_upstream_error_status():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(501, json={"detail": "The /rag endpoint requires an 'llm' config section."})
+
+    app = create_app(_config(), client=_mock_upstream(handler))
+    with TestClient(app) as client:
+        resp = client.post("/api/rag", json={"query": "x", "k": 1})
+
+    assert resp.status_code == 501
+    assert "llm" in resp.json()["detail"]
+
+
+def test_proxy_handles_unreachable_api():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    app = create_app(_config(api_url="http://down:9999"), client=_mock_upstream(handler))
+    with TestClient(app) as client:
+        resp = client.post("/api/rag", json={"query": "x", "k": 1})
+
+    assert resp.status_code == 502
+    assert "Could not reach the API" in resp.json()["detail"]
+
+
+def test_requires_frontend_section():
+    with pytest.raises(ValueError, match="frontend"):
+        create_app(VetoshConfig())

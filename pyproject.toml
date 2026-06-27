@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vetosh"
+version = "0.1.0"
+description = "A universal, no-code RAG server for any vector database, built on the Pathway Live Data Framework."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "vetosh contributors" }]
+keywords = ["rag", "pathway", "vector-database", "retrieval", "llm", "embeddings"]
+# Pathway requires CPython >= 3.10.
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "pathway>=0.31",
+    "pathway[xpack-llm]>=0.31",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "httpx>=0.27",
+    "pydantic>=2.0",
+    "asyncpg>=0.29",
+    "pymilvus>=2.4",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+gdrive = ["google-api-python-client>=2.0", "google-auth>=2.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.8",
+    # Embedded Milvus engine for the Milvus integration test (the pgvector
+    # integration test instead spins up a Docker container — see docs).
+    "milvus-lite>=2.4",
+]
+
+[project.scripts]
+vetosh = "vetosh.cli:main"
+
+[project.urls]
+Homepage = "https://pathway.com"
+Documentation = "https://github.com/pathwaycom/vetosh"
+
+[tool.setuptools.packages.find]
+include = ["vetosh*"]
+
+[tool.setuptools.package-data]
+"vetosh.frontend" = ["static/*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "slow: end-to-end tests that spin up a Pathway runtime per pass",
+    "integration: tests that require Docker (real database containers)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

@@ -93,6 +93,37 @@ The one deliberate exception: the embedded DuckDB backend trades this
 distribution for zero setup — one local file, single-writer, ideal for
 laptops and demos (see [docs](docs/README.md) for its concurrency note).
 
+## Benchmarks
+
+The claim that matters: **the indexer's memory footprint does not depend on
+the corpus size.** Sources are read in `only_metadata` mode — documents flow
+through the pipeline instead of accumulating in it — so memory is a constant
+set by the worker count and the local embedding model, while corpus size only
+affects wall-clock time.
+
+Self-contained benchmark (docker-compose: Qdrant + indexer + server, fully
+local embeddings, zero API cost) over a Wikipedia corpus —
+see [benchmarks/realtime-data-indexing](benchmarks/realtime-data-indexing):
+
+| corpus | ≈ pages | docs | chunks | indexing time | peak RSS | in Qdrant | retrieval accuracy |
+|---|---|---|---|---|---|---|---|
+| 100 MB | 52 000 | 12 969 | 66 136 | 8.3 min | 18.0 GB* | 629 MB | 5/5 |
+
+\* 8 Pathway worker processes × ~1.5–2 GB each: a local sentence-transformers
+stack (PyTorch runtime + MiniLM weights + inference buffers) per worker — a
+**constant per worker, independent of corpus size**. Fewer workers or a
+smaller embedder batch size shrink it roughly linearly.
+
+<p align="center">
+  <img src="docs/assets/bench-memory.png" alt="vetosh indexer memory over time while indexing: RSS stays in a flat band while the chunk counter climbs to 66k" width="100%">
+</p>
+
+Setup: 96-core CPU host, streaming mode, 8 worker processes
+(`indexer.workers: 8`), local `all-MiniLM-L6-v2` embeddings (384 dims),
+512-token chunks, Qdrant as the vector store. Retrieval accuracy = distinctive
+articles sampled from the corpus must come back for their own queries via
+`/api/v1/retrieve`.
+
 ## Requirements
 
 Python ≥ 3.10 (the minimum supported by Pathway).

@@ -1,0 +1,43 @@
+# Benchmark config: LOCAL embeddings only (sentence-transformers, no API
+# calls, zero cost), Qdrant as the vector store.
+#
+# Qdrant is chosen deliberately for this scenario: HNSW builds incrementally
+# on upsert (fast indexing), it is built for concurrent search-while-writing,
+# and the Pathway sink keys points internally (no user primary key), so
+# writes parallelize across Pathway workers.
+
+pathway_license_key: ${PATHWAY_LICENSE_KEY}
+
+sources:
+  - type: fs
+    path: /data/docs
+    glob: "**/*.txt"
+    mode: streaming       # the product mode: continuous watch, incremental
+                          # commits; the bench detects completion by the chunk
+                          # counter going stable
+
+vector_db:
+  type: qdrant
+  host: qdrant            # docker-compose service name
+  rest_port: 6333
+  grpc_port: 6334
+  collection: bench_embeddings
+
+embedder:
+  type: sentence_transformer            # LOCAL — no external API, free
+  model: sentence-transformers/all-MiniLM-L6-v2   # 384 dims, CPU-friendly
+  batch_size: 256
+
+splitter:
+  type: token_count
+  chunk_size: 512
+
+indexer:
+  workers: 8              # Pathway worker PROCESSES (via `pathway spawn`)
+
+persistence:
+  enabled: false          # clean cold run; nothing cached between runs
+
+server:
+  host: 0.0.0.0
+  port: 8000

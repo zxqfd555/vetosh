@@ -9,9 +9,16 @@ parse UDF. Today that is:
   path in the metadata.
 - **gdrive** — ``pw.io.gdrive.read(format="only_metadata")``; bytes downloaded by
   file ``id`` via the Google Drive API.
+- **s3** — ``pw.io.s3.read(format="only_metadata")`` (Pathway develop,
+  #10483); bytes downloaded by object key via boto3. Covers any S3-compatible
+  store (MinIO, DigitalOcean, Wasabi) through ``endpoint``/``with_path_style``.
+- **sharepoint** — ``pathway.xpacks.connectors.sharepoint.read(
+  format="only_metadata")`` (same Pathway change; Scale license); bytes
+  downloaded by server-relative path via the same certificate-authenticated
+  ``office365`` client.
 
-S3/MinIO do not offer ``only_metadata`` and SharePoint has no connector in this
-Pathway build, so they are intentionally out of scope here.
+pyfilesystem gained ``only_metadata`` in the same Pathway change and slots in
+here (a ``read_source`` branch + a fetcher) next.
 
 Each source type provides a :class:`Fetcher` that turns a metadata dict into
 ``(bytes, suffix)`` for the parser. The fetcher is what makes the parse step
@@ -56,6 +63,39 @@ def read_source(src, name: str) -> pw.Table:
             service_user_credentials_file=src.service_user_credentials_file,
             file_name_pattern=src.file_name_pattern,
             name=name,
+        )
+    if src.type == "s3":
+        return pw.io.s3.read(
+            src.path,
+            format="only_metadata",
+            aws_s3_settings=pw.io.s3.AwsS3Settings(
+                bucket_name=src.bucket,
+                access_key=src.access_key,
+                secret_access_key=src.secret_access_key,
+                region=src.region,
+                endpoint=src.endpoint,
+                with_path_style=src.with_path_style,
+            ),
+            mode=src.mode,
+            name=name,
+        )
+    if src.type == "sharepoint":
+        # Requires a Pathway Scale license; the connector polls the site every
+        # refresh_interval seconds and emits native additions/retractions.
+        from pathway.xpacks.connectors import sharepoint
+
+        return sharepoint.read(
+            src.url,
+            tenant=src.tenant,
+            client_id=src.client_id,
+            cert_path=src.cert_path,
+            thumbprint=src.thumbprint,
+            root_path=src.root_path,
+            mode=src.mode,
+            format="only_metadata",
+            recursive=src.recursive,
+            object_size_limit=src.object_size_limit,
+            refresh_interval=src.refresh_interval,
         )
     raise ValueError(f"Unsupported source type: {src.type!r}")  # pragma: no cover
 
@@ -116,9 +156,89 @@ class GDriveFetcher:
         return contents, suffix
 
 
+class S3Fetcher:
+    """Download object bytes from S3 (or an S3-compatible endpoint) by key.
+
+    The ``only_metadata`` row's ``path`` field is the object key. ``client``
+    is injectable for tests; in production a ``boto3`` client is built lazily
+    from the source settings (boto3 ships with pathway).
+    """
+
+    def __init__(self, src, client=None) -> None:
+        self._src = src
+        self._client = client
+
+    def _ensure_client(self):
+        if self._client is None:
+            import boto3
+            from botocore.config import Config
+
+            src = self._src
+            kwargs: dict[str, Any] = {}
+            if src.access_key:
+                kwargs["aws_access_key_id"] = src.access_key
+            if src.secret_access_key:
+                kwargs["aws_secret_access_key"] = src.secret_access_key
+            if src.region:
+                kwargs["region_name"] = src.region
+            if src.endpoint:
+                kwargs["endpoint_url"] = src.endpoint
+            if src.with_path_style:
+                kwargs["config"] = Config(s3={"addressing_style": "path"})
+            self._client = boto3.client("s3", **kwargs)
+        return self._client
+
+    def fetch(self, metadata: dict[str, Any]) -> tuple[bytes, str]:
+        key = metadata["path"]
+        response = self._ensure_client().get_object(Bucket=self._src.bucket, Key=key)
+        return response["Body"].read(), Path(key).suffix
+
+
+class SharePointFetcher:
+    """Download file bytes from SharePoint by server-relative path.
+
+    Reuses the same certificate authentication as the connector
+    (``office365`` ``ClientContext``); the ``only_metadata`` row's ``path``
+    field is the file's server-relative URL. ``download_fn`` is injectable
+    for tests.
+    """
+
+    def __init__(self, src, download_fn: Callable[[str], bytes] | None = None) -> None:
+        self._src = src
+        self._download_fn = download_fn
+        self._context = None
+
+    def _ensure_context(self):
+        if self._context is None:
+            from office365.sharepoint.client_context import ClientContext
+
+            src = self._src
+            self._context = ClientContext(src.url).with_client_certificate(
+                tenant=src.tenant,
+                client_id=src.client_id,
+                thumbprint=src.thumbprint,
+                cert_path=src.cert_path,
+            )
+        return self._context
+
+    def _context_download(self, path: str) -> bytes:
+        context = self._ensure_context()
+        file = context.web.get_file_by_server_relative_path(path)
+        return file.get_content().execute_query_retry().value
+
+    def fetch(self, metadata: dict[str, Any]) -> tuple[bytes, str]:
+        path = metadata["path"]
+        download = self._download_fn or self._context_download
+        return download(path), Path(path).suffix
+
+
 def make_fetcher(src) -> Fetcher:
     if src.type == "fs":
         return FsFetcher()
     if src.type == "gdrive":
         return GDriveFetcher(src.service_user_credentials_file)
+    if src.type == "s3":
+        return S3Fetcher(src)
+    if src.type == "sharepoint":
+        return SharePointFetcher(src)
     raise ValueError(f"Unsupported source type: {src.type!r}")  # pragma: no cover

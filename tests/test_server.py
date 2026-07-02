@@ -1,13 +1,13 @@
-"""Tests for the FastAPI server (uses the SQLite accessor + mock embedder)."""
+"""Tests for the FastAPI server (uses the DuckDB accessor + mock embedder)."""
 
 from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import fake_embedding, write_sqlite_rows
-from vetosh.config.schema import EmbedderConfig, SqliteConfig, VetoshConfig
-from vetosh.server.accessors.sqlite import SqliteAccessor
+from tests.conftest import fake_embedding, write_duckdb_rows
+from vetosh.config.schema import DuckDbConfig, EmbedderConfig, VetoshConfig
+from vetosh.server.accessors.duckdb import DuckDbAccessor
 from vetosh.server.main import create_app
 
 DOCS = ["alpha document about cats", "beta report on dogs", "gamma notes on birds"]
@@ -15,7 +15,7 @@ DOCS = ["alpha document about cats", "beta report on dogs", "gamma notes on bird
 
 @pytest.fixture
 def store_path(tmp_path):
-    path = tmp_path / "store.sqlite3"
+    path = tmp_path / "store.duckdb"
     rows = [
         {
             "id": str(i),
@@ -25,23 +25,23 @@ def store_path(tmp_path):
         }
         for i, text in enumerate(DOCS)
     ]
-    write_sqlite_rows(path, rows)
+    write_duckdb_rows(path, rows)
     return path
 
 
 def _client(store_path, embedder, llm=None):
     config = VetoshConfig(
-        vector_db=SqliteConfig(type="sqlite", path=str(store_path)),
+        vector_db=DuckDbConfig(type="duckdb", path=str(store_path)),
         embedder=EmbedderConfig(type="openai"),
     )
-    accessor = SqliteAccessor(config.vector_db)
+    accessor = DuckDbAccessor(config.vector_db)
     app = create_app(config, embedder=embedder, accessor=accessor, llm=llm)
     return TestClient(app)
 
 
 def test_retrieve_top_k(store_path, mock_server_embedder):
     with _client(store_path, mock_server_embedder) as client:
-        resp = client.post("/retrieve", json={"query": DOCS[0], "k": 2})
+        resp = client.post("/api/v1/retrieve", json={"query": DOCS[0], "k": 2})
     assert resp.status_code == 200
     results = resp.json()["results"]
     assert len(results) == 2
@@ -53,14 +53,14 @@ def test_retrieve_top_k(store_path, mock_server_embedder):
 
 def test_results_ordered_by_score_desc(store_path, mock_server_embedder):
     with _client(store_path, mock_server_embedder) as client:
-        resp = client.post("/retrieve", json={"query": DOCS[1], "k": 3})
+        resp = client.post("/api/v1/retrieve", json={"query": DOCS[1], "k": 3})
     scores = [r["score"] for r in resp.json()["results"]]
     assert scores == sorted(scores, reverse=True)
 
 
 def test_rag_returns_answer(store_path, mock_server_embedder, mock_llm):
     with _client(store_path, mock_server_embedder, llm=mock_llm) as client:
-        resp = client.post("/rag", json={"query": "tell me about cats", "k": 2})
+        resp = client.post("/api/v1/rag", json={"query": "tell me about cats", "k": 2})
     assert resp.status_code == 200
     body = resp.json()
     assert isinstance(body["answer"], str) and body["answer"]
@@ -69,5 +69,50 @@ def test_rag_returns_answer(store_path, mock_server_embedder, mock_llm):
 
 def test_rag_disabled_without_llm(store_path, mock_server_embedder):
     with _client(store_path, mock_server_embedder) as client:
-        resp = client.post("/rag", json={"query": "x", "k": 1})
+        resp = client.post("/api/v1/rag", json={"query": "x", "k": 1})
     assert resp.status_code == 501
+
+
+def test_legacy_unversioned_aliases_still_work(store_path, mock_server_embedder):
+    """Pre-versioning routes are kept as deprecated aliases of /api/v1."""
+
+    with _client(store_path, mock_server_embedder) as client:
+        health = client.get("/health")
+        legacy = client.post("/retrieve", json={"query": DOCS[0], "k": 1})
+        v1 = client.post("/api/v1/retrieve", json={"query": DOCS[0], "k": 1})
+    assert health.status_code == 200
+    assert legacy.status_code == 200
+    assert legacy.json() == v1.json()
+
+
+def test_serves_embedded_chat_page(store_path, mock_server_embedder):
+    with _client(store_path, mock_server_embedder) as client:
+        resp = client.get("/")
+        cfg = client.get("/api/v1/config").json()
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "__APP_TITLE__" not in resp.text
+    # Empty api_url means "same origin" for the page.
+    assert cfg == {"title": "vetosh", "api_url": ""}
+
+
+def test_stats_endpoint(store_path, mock_server_embedder):
+    with _client(store_path, mock_server_embedder) as client:
+        body = client.get("/api/v1/stats").json()
+    # Three rows over three distinct source paths (see the store fixture).
+    assert body["backend"] == "duckdb"
+    assert body["chunks"] == 3
+    assert body["documents"] == 3
+
+
+def test_frontend_can_be_disabled(store_path, mock_server_embedder):
+    config = VetoshConfig(
+        vector_db=DuckDbConfig(type="duckdb", path=str(store_path)),
+        embedder=EmbedderConfig(type="openai"),
+        server={"serve_frontend": False},
+    )
+    accessor = DuckDbAccessor(config.vector_db)
+    app = create_app(config, embedder=mock_server_embedder, accessor=accessor)
+    with TestClient(app) as client:
+        assert client.get("/").status_code == 404
+        assert client.get("/api/v1/health").status_code == 200

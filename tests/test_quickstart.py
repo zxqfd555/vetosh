@@ -90,6 +90,44 @@ def test_milvus_vector_db():
     assert cfg.vector_db.type == "milvus"
 
 
+def test_duckdb_vector_db():
+    answers = {
+        **BASE,
+        "config_type": "indexer",
+        "vector_db_type": "duckdb",
+        "duckdb_path": "./embeddings.duckdb",
+    }
+    cfg = _validate(answers)
+    assert cfg.vector_db.type == "duckdb"
+    assert cfg.vector_db.path == "./embeddings.duckdb"
+
+
+def test_qdrant_vector_db():
+    answers = {
+        **BASE,
+        "config_type": "indexer",
+        "vector_db_type": "qdrant",
+        "qdrant_host": "qdrant.example.com",
+        "qdrant_api_key": "${QDRANT_API_KEY}",
+    }
+    cfg = _validate(answers)
+    assert cfg.vector_db.type == "qdrant"
+    assert cfg.vector_db.grpc_url() == "http://qdrant.example.com:6334"
+
+
+def test_mongodb_vector_db():
+    answers = {
+        **BASE,
+        "config_type": "indexer",
+        "vector_db_type": "mongodb",
+        "mongodb_connection_string": "mongodb+srv://u:p@cluster.example.net",
+        "mongodb_database": "vetosh",
+    }
+    cfg = _validate(answers)
+    assert cfg.vector_db.type == "mongodb"
+    assert cfg.vector_db.vector_index == "vector_index"
+
+
 def test_defaults_have_no_brand_name():
     """Suggested defaults must not embed the project name."""
 
@@ -114,8 +152,8 @@ def test_wizard_run_collects_multiple_sources():
         "2",                       # config type: indexer only
         "1", "/data/a", "",        # source 1: filesystem, path, default glob
         "1", "/data/b", "",        # source 2: filesystem, path, default glob
-        "3",                       # add another? -> Done (fs, gdrive, done)
-        "1",                       # vector db: pgvector
+        "5",                       # add another? -> Done (fs, gdrive, s3, sharepoint, done)
+        "2",                       # vector db: pgvector (1 = duckdb)
         "postgresql://u:p@h/db",   # pg connection string
         "",                        # collection (default)
         "1",                       # embedder: openai
@@ -147,8 +185,8 @@ def test_wizard_run_collects_gdrive_source():
         "drive-folder-id",          # gdrive object id
         "./creds.json",             # credentials file
         "*.pdf",                    # file name pattern
-        "3",                        # add another? -> Done (fs, gdrive, done) = index 3
-        "1",                        # vector db: pgvector
+        "5",                        # add another? -> Done (fs, gdrive, s3, sharepoint, done)
+        "2",                        # vector db: pgvector (1 = duckdb)
         "postgresql://u:p@h/db",
         "",                         # collection default
         "1", "", "",                # embedder openai, model, key

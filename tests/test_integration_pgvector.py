@@ -28,7 +28,7 @@ from tests.dockerutil import (
 )
 from vetosh.config.schema import PgVectorConfig
 from vetosh.server.accessors.pgvector import PgVectorAccessor
-from vetosh.testing import EMBED_DIM, fake_embedding
+from vetosh.testing import fake_embedding
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
@@ -36,25 +36,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 IMAGE = "pgvector/pgvector:pg16"
 TABLE = "vetosh_embeddings"
 
-CREATE_TABLE = f"""
-CREATE EXTENSION IF NOT EXISTS vector;
-CREATE TABLE IF NOT EXISTS {TABLE} (
-    chunk_id  text PRIMARY KEY,
-    text      text,
-    metadata  jsonb,
-    embedding vector({EMBED_DIM})
-);
-"""
-
-
-async def _setup_schema(dsn: str) -> None:
-    import asyncpg
-
-    conn = await asyncpg.connect(dsn)
-    try:
-        await conn.execute(CREATE_TABLE)
-    finally:
-        await conn.close()
+# No schema setup here: the indexer's prepare_backend() must create the
+# extension, the table and the HNSW index on its own (that is under test).
 
 
 async def _can_connect(dsn: str) -> bool:
@@ -89,27 +72,26 @@ def pgvector_dsn():
     dsn = f"postgresql://postgres:postgres@127.0.0.1:{port}/postgres"
     try:
         wait_until(lambda: asyncio.run(_can_connect(dsn)), timeout=90)
-        asyncio.run(_setup_schema(dsn))
         yield dsn
     finally:
         stop_container(container)
 
 
-async def _truncate(dsn: str) -> None:
+async def _drop_table(dsn: str) -> None:
     import asyncpg
 
     conn = await asyncpg.connect(dsn)
     try:
-        await conn.execute(f"TRUNCATE {TABLE}")
+        await conn.execute(f"DROP TABLE IF EXISTS {TABLE}")
     finally:
         await conn.close()
 
 
 @pytest.fixture(autouse=True)
 def clean_table(pgvector_dsn):
-    """Each test starts from an empty table (the container is module-scoped)."""
+    """Each test starts without the table — the indexer must create it."""
 
-    asyncio.run(_truncate(pgvector_dsn))
+    asyncio.run(_drop_table(pgvector_dsn))
     yield
 
 

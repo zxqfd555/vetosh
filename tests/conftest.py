@@ -38,6 +38,32 @@ class MockLLM:
 
 
 @pytest.fixture
+def tcp_port() -> int:
+    """A dynamically allocated free TCP port (never hardcode host ports)."""
+
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture
+def tcp_port_factory():
+    """Factory flavour of ``tcp_port`` for tests that need several ports
+    (e.g. a service exposing both REST and gRPC)."""
+
+    import socket
+
+    def make() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            return s.getsockname()[1]
+
+    return make
+
+
+@pytest.fixture
 def mock_server_embedder() -> MockServerEmbedder:
     return MockServerEmbedder()
 
@@ -56,22 +82,32 @@ def mock_xpack_embedder():
     return build_mock_embedder()
 
 
-def write_sqlite_rows(path: Path, rows: list[dict]) -> None:
-    """Populate a SQLite vector store directly (server tests)."""
+def write_duckdb_rows(path: Path, rows: list[dict]) -> None:
+    """Populate a DuckDB vector store directly (server tests).
 
-    from vetosh.server.accessors.sqlite import connect
+    Mirrors the schema the indexer's ``pw.io.duckdb`` snapshot sink creates:
+    ``(chunk_id, text, metadata JSON-string, embedding DOUBLE[])``.
+    """
 
-    conn = connect(path)
+    import duckdb
+
+    conn = duckdb.connect(str(path))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS vetosh_embeddings ("
+        "  chunk_id VARCHAR PRIMARY KEY,"
+        "  text VARCHAR,"
+        "  metadata VARCHAR,"
+        "  embedding DOUBLE[]"
+        ")"
+    )
     for row in rows:
         conn.execute(
-            "INSERT OR REPLACE INTO vetosh_embeddings (id, text, metadata, embedding) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO vetosh_embeddings VALUES (?, ?, ?, ?)",
             (
                 row["id"],
                 row["text"],
                 json.dumps(row.get("metadata", {})),
-                json.dumps(row["embedding"]),
+                [float(x) for x in row["embedding"]],
             ),
         )
-    conn.commit()
     conn.close()

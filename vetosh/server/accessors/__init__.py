@@ -18,6 +18,10 @@ def build_accessor(vector_db) -> AsyncVectorAccessor:
     """
 
     db_type = vector_db.type
+    if db_type == "duckdb":
+        from vetosh.server.accessors.duckdb import DuckDbAccessor
+
+        return DuckDbAccessor(vector_db)
     if db_type == "pgvector":
         from vetosh.server.accessors.pgvector import PgVectorAccessor
 
@@ -26,8 +30,24 @@ def build_accessor(vector_db) -> AsyncVectorAccessor:
         from vetosh.server.accessors.milvus import MilvusAccessor
 
         return MilvusAccessor(vector_db)
-    if db_type == "sqlite":
-        from vetosh.server.accessors.sqlite import SqliteAccessor
+    if db_type == "qdrant":
+        from vetosh.server.accessors.qdrant import QdrantAccessor
 
-        return SqliteAccessor(vector_db)
+        return QdrantAccessor(vector_db)
+    if db_type == "chroma":
+        from vetosh.server.accessors.chroma import ChromaAccessor
+
+        return ChromaAccessor(vector_db)
+    if db_type == "weaviate":
+        from vetosh.server.accessors.weaviate import WeaviateAccessor
+
+        return WeaviateAccessor(vector_db)
+    if db_type == "pinecone":
+        from vetosh.server.accessors.pinecone import PineconeAccessor
+
+        return PineconeAccessor(vector_db)
+    if db_type == "mongodb":
+        from vetosh.server.accessors.mongodb import MongoDbAccessor
+
+        return MongoDbAccessor(vector_db)
     raise ValueError(f"Unsupported vector_db type: {db_type!r}")

@@ -16,13 +16,17 @@ embedder in a YAML file, and run a few commands.
 pip install "vetosh[openai]"
 
 vetosh quickstart                       # interactive config wizard
-vetosh indexer  --config config.yaml    # watch files → embed → vector DB (live)
-vetosh server   --config config.yaml    # FastAPI /retrieve and /rag endpoints
-vetosh frontend --config config.yaml    # web chat UI → http://localhost:3000
+vetosh up --config config.yaml          # indexer + server together → http://localhost:8000
 ```
 
+(Or run `vetosh indexer` and `vetosh server` separately — that is what `up`
+supervises, and how production deployments split them.)
+
+The server hosts both the web chat UI (on `/`) and the versioned REST API
+(under `/api/v1`) on one port:
+
 ```bash
-curl -X POST http://localhost:8000/retrieve \
+curl -X POST http://localhost:8000/api/v1/retrieve \
   -H 'Content-Type: application/json' \
   -d '{"query": "how does persistence work?", "k": 5}'
 ```
@@ -31,22 +35,63 @@ curl -X POST http://localhost:8000/retrieve \
 
 - **No code.** Configure everything in one YAML file (or generate it with
   `vetosh quickstart`).
-- **Any vector DB.** pgvector and Milvus out of the box.
+- **Any vector DB — 8 backends.** DuckDB (embedded, zero setup — the default),
+  pgvector, Qdrant, Milvus, ChromaDB, Weaviate, Pinecone and MongoDB Atlas
+  Vector Search. Every backend is written through Pathway's **native
+  `pw.io.*` connectors** in snapshot mode, so file edits and deletions become
+  real upserts/deletes in the store.
+- **Zero-setup default.** `type: duckdb` needs no external service and does
+  vector search *inside the database* (`list_cosine_similarity` over native
+  `DOUBLE[]` columns) — no linear scans in Python anywhere.
 - **Live & incremental.** Built on Pathway: additions, edits and deletions are
   reflected in the vector DB in real time. Sources are read in `only_metadata`
   mode, so a large corpus stays tiny in the pipeline.
-- **Multiple sources.** Local filesystem and Google Drive (both `only_metadata`),
-  mixed freely in one config.
+- **Multiple sources.** Local filesystem, Google Drive, S3/MinIO and
+  SharePoint (all `only_metadata`), mixed freely in one config.
 - **Reuses `pathway.xpacks.llm`.** Parsers, splitters and embedders are used
-  as-is — vetosh implements none of its own.
-- **Decoupled & scalable.** Indexer, API server and web frontend are independent
-  processes — put each on its own worker. The frontend proxies to the API at a
-  configurable `api_url`; the server scales horizontally; they share only the
-  vector DB.
-- **Web chat UI.** `vetosh frontend` serves a clean ChatGPT/Claude-style chat
-  page with grounded answers and expandable sources.
+  as-is — vetosh implements none of its own. Five embedder families (OpenAI,
+  LiteLLM, SentenceTransformers, Gemini, Bedrock) work identically on the
+  indexer and the server side — including a fully local, credential-free
+  stack with `sentence_transformer` + DuckDB.
+- **Decoupled & scalable.** Indexer and API server are independent processes
+  sharing only the vector DB; the server is stateless and scales horizontally.
+- **Web chat UI, same port.** `vetosh server` serves a clean
+  ChatGPT/Claude-style chat page on `/` next to the versioned API
+  (`/api/v1/...`) — same origin, no CORS, nothing extra to run. For split
+  deployments (UI on a different host) there is a standalone
+  `vetosh frontend` proxy tier.
 - **Free Pathway license.** One click at
   <https://pathway.com/framework/get-license>.
+
+## Architecture
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="vetosh architecture: sources feed the Pathway indexer, which writes through native pw.io connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
+</p>
+
+**The two halves are fully decoupled.** The indexer (write path) and the
+server (read path) are separate processes — different executables that never
+talk to each other. Their only contract is the vector database itself:
+
+- **Independent scaling.** The server is stateless and read-only — run any
+  number of instances behind a load balancer; each also serves the chat UI at
+  zero cost. The indexer scales separately with Pathway's multi-worker
+  support. Bulk re-indexing never slows down query serving, and query spikes
+  never stall indexing.
+- **Failure isolation.** If the indexer is down, serving continues over the
+  last-synced data; if the server is down, indexing keeps the database fresh.
+  Either side can be restarted or upgraded independently (the indexer resumes
+  from its persistence without re-embedding).
+- **The database stays yours.** Vectors live in *your* store in a plain,
+  documented schema — other consumers (BI, other apps, a different retrieval
+  stack) can read the same collection; vetosh doesn't hold it hostage.
+- **Optional third tier.** For split deployments (UI on a different host than
+  the API) a standalone `vetosh frontend` serves the same chat page and
+  proxies to the API server-side.
+
+The one deliberate exception: the embedded DuckDB backend trades this
+distribution for zero setup — one local file, single-writer, ideal for
+laptops and demos (see [docs](docs/README.md) for its concurrency note).
 
 ## Requirements
 
@@ -67,23 +112,36 @@ pytest -m integration          # real-database tests (see below)
 pytest                         # everything
 ```
 
+Per-backend clients install as extras — pick what you use:
+
+```bash
+pip install "vetosh[qdrant]"      # also: pgvector, milvus, chroma, weaviate,
+                                  #       pinecone, mongodb, local, gemini, all
+```
+
 ### Integration tests (real databases)
 
-The `integration`-marked tests run the full indexer against a **real** vector
-database and query it back through the production accessor:
+**Every claimed backend has an integration test** running the same scenario
+end-to-end against a real instance: index two documents with the real indexer,
+retrieve through the production accessor (exact-text query must rank first
+with cosine ~1.0), delete a file, re-index, and verify its vectors are gone
+(snapshot semantics). The shared driver lives in `tests/integration_common.py`.
 
-- **pgvector** — `tests/test_integration_pgvector.py` spins up a throwaway
-  `pgvector/pgvector` **Docker container** (via `tests/dockerutil.py`), creates
-  the table, indexes documents, and verifies retrieval and deletion. It skips
-  automatically if Docker is unavailable.
-- **Milvus** — `tests/test_integration_milvus.py` uses the embedded **Milvus
-  Lite** engine (`milvus-lite`), exercising the same `pw.io.milvus.write` sink
-  and async accessor as a real server. It skips if `milvus-lite` is not
-  installed.
+| Backend | Test | Real instance |
+|---|---|---|
+| DuckDB | `test_integration_duckdb.py` | embedded — runs everywhere |
+| pgvector | `test_integration_pgvector.py` | `pgvector/pgvector` Docker container |
+| Milvus | `test_integration_milvus.py` | embedded Milvus Lite engine |
+| Qdrant | `test_integration_qdrant.py` | `qdrant/qdrant` Docker container |
+| ChromaDB | `test_integration_chroma.py` | `chromadb/chroma` Docker container |
+| Weaviate | `test_integration_weaviate.py` | `semitechnologies/weaviate` Docker container |
+| Pinecone | `test_integration_pinecone.py` | official `pinecone-local` emulator (Docker) |
+| MongoDB | `test_integration_mongodb.py` | `mongodb-atlas-local` (mongod + mongot, real `$vectorSearch`) |
 
-`tests/dockerutil.py` is a small, dependency-free helper (Docker CLI via
-subprocess) for spinning up throwaway DB containers — the same pattern extends to
-a full Milvus standalone container if you prefer that over Milvus Lite.
+Containers are throwaway (`tests/dockerutil.py`, Docker CLI via subprocess, no
+extra dependency) and host ports are **allocated dynamically** — tests never
+assume a fixed localhost port is free or that a service is already running.
+Each test skips automatically when Docker or its client library is missing.
 
 ## License
 

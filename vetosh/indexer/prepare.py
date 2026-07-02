@@ -1,0 +1,248 @@
+"""Backend preparation: create the targets the output connectors don't.
+
+Pathway's output connectors auto-create their target only for DuckDB
+(``init_mode``) and Qdrant (collection on first write). Every other backend
+expects the table / collection / index to exist — so the indexer prepares
+them here at startup, and a first run against a fresh database just works:
+
+- **pgvector** — ``CREATE EXTENSION vector``, the table, and an HNSW cosine
+  index on ``embedding``.
+- **milvus** — collection ``(chunk_id VARCHAR pk, text VARCHAR, metadata
+  JSON, embedding FLOAT_VECTOR(dim))`` with a COSINE AUTOINDEX.
+- **chroma** — collection with the cosine ``hnsw:space``.
+- **weaviate** — collection with no server-side vectorizer and TEXT
+  properties matching the sink's columns.
+- **pinecone** — serverless index (cosine) with the embedder's dimension.
+- **mongodb** — collection plus the Atlas ``vectorSearch`` index on the
+  ``embedding`` path.
+
+All operations are create-if-missing (idempotent, race-tolerant). Vector
+dimension resolves from ``vector_db.embedding_dimension`` when set, otherwise
+from the embedder itself (``BaseEmbedder.get_embedding_dimension()`` — one
+probe embedding call).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from vetosh.config.schema import VetoshConfig
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_embedding_dimension(config: VetoshConfig) -> int:
+    explicit = getattr(config.vector_db, "embedding_dimension", None)
+    if explicit:
+        return int(explicit)
+    if config.embedder.type == "mock":
+        from vetosh.testing import EMBED_DIM
+
+        return EMBED_DIM
+    from vetosh.indexer.graph import build_xpack_embedder
+
+    logger.info("Resolving the embedding dimension with a probe embedding call")
+    return int(build_xpack_embedder(config.embedder).get_embedding_dimension())
+
+
+def prepare_backend(config: VetoshConfig) -> None:
+    """Create the vector-DB target for ``config`` if it does not exist."""
+
+    vdb = config.vector_db
+    if vdb.type in {"duckdb", "qdrant"}:
+        return  # the connector creates the target itself
+    if vdb.type == "pgvector":
+        _prepare_pgvector(config)
+    elif vdb.type == "milvus":
+        _prepare_milvus(config)
+    elif vdb.type == "chroma":
+        _prepare_chroma(config)
+    elif vdb.type == "weaviate":
+        _prepare_weaviate(config)
+    elif vdb.type == "pinecone":
+        _prepare_pinecone(config)
+    elif vdb.type == "mongodb":
+        _prepare_mongodb(config)
+
+
+def _prepare_pgvector(config: VetoshConfig) -> None:
+    import asyncpg
+
+    vdb = config.vector_db
+    dimension = resolve_embedding_dimension(config)
+
+    async def go() -> None:
+        conn = await asyncpg.connect(vdb.connection_string)
+        try:
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            await conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {vdb.table} ("
+                f"  chunk_id  text PRIMARY KEY,"
+                f"  text      text,"
+                f"  metadata  jsonb,"
+                f"  embedding vector({dimension})"
+                f")"
+            )
+            try:
+                await conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS {vdb.table}_embedding_hnsw "
+                    f"ON {vdb.table} USING hnsw (embedding vector_cosine_ops)"
+                )
+            except asyncpg.PostgresError as exc:
+                # HNSW needs pgvector >= 0.5; retrieval still works unindexed.
+                logger.warning("Could not create the HNSW index: %s", exc)
+        finally:
+            await conn.close()
+
+    asyncio.run(go())
+    logger.info("pgvector: table %r ready (dimension %d)", vdb.table, dimension)
+
+
+def _prepare_milvus(config: VetoshConfig) -> None:
+    from pymilvus import DataType, MilvusClient
+
+    vdb = config.vector_db
+    kwargs = {"uri": vdb.resolved_uri()}
+    if vdb.token:
+        kwargs["token"] = vdb.token
+    client = MilvusClient(**kwargs)
+    try:
+        if client.has_collection(vdb.collection):
+            return
+        dimension = resolve_embedding_dimension(config)
+        schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
+        schema.add_field("chunk_id", DataType.VARCHAR, is_primary=True, max_length=512)
+        schema.add_field("text", DataType.VARCHAR, max_length=65535)
+        schema.add_field("metadata", DataType.JSON)
+        schema.add_field("embedding", DataType.FLOAT_VECTOR, dim=dimension)
+        index = client.prepare_index_params()
+        index.add_index(
+            field_name="embedding", index_type="AUTOINDEX", metric_type="COSINE"
+        )
+        client.create_collection(vdb.collection, schema=schema, index_params=index)
+        logger.info(
+            "milvus: collection %r created (dimension %d)", vdb.collection, dimension
+        )
+    finally:
+        client.close()
+
+
+def _prepare_chroma(config: VetoshConfig) -> None:
+    import chromadb
+
+    vdb = config.vector_db
+    client = chromadb.HttpClient(
+        host=vdb.host,
+        port=vdb.port,
+        ssl=vdb.ssl,
+        headers=vdb.headers or {},
+        tenant=vdb.tenant,
+        database=vdb.database,
+    )
+    client.get_or_create_collection(vdb.collection, metadata={"hnsw:space": "cosine"})
+    logger.info("chroma: collection %r ready (cosine)", vdb.collection)
+
+
+def _prepare_weaviate(config: VetoshConfig) -> None:
+    import weaviate
+    from weaviate.classes.config import Configure, DataType, Property
+    from weaviate.connect import ConnectionParams
+
+    vdb = config.vector_db
+    auth = weaviate.auth.AuthApiKey(vdb.api_key) if vdb.api_key else None
+    client = weaviate.WeaviateClient(
+        connection_params=ConnectionParams.from_params(
+            http_host=vdb.http_host,
+            http_port=vdb.http_port,
+            http_secure=vdb.http_secure,
+            grpc_host=vdb.grpc_host or vdb.http_host,
+            grpc_port=vdb.grpc_port,
+            grpc_secure=vdb.grpc_secure,
+        ),
+        auth_client_secret=auth,
+    )
+    client.connect()
+    try:
+        if not client.collections.exists(vdb.collection):
+            client.collections.create(
+                vdb.collection,
+                vectorizer_config=Configure.Vectorizer.none(),
+                properties=[
+                    Property(name="chunk_id", data_type=DataType.TEXT),
+                    Property(name="text", data_type=DataType.TEXT),
+                    Property(name="metadata", data_type=DataType.TEXT),
+                ],
+            )
+            logger.info("weaviate: collection %r created", vdb.collection)
+    finally:
+        client.close()
+
+
+def _prepare_pinecone(config: VetoshConfig) -> None:
+    import os
+
+    from pinecone import Pinecone, ServerlessSpec
+
+    vdb = config.vector_db
+    api_key = vdb.api_key or os.environ.get("PINECONE_API_KEY")
+    pc = Pinecone(api_key=api_key, host=vdb.host)
+    if not pc.has_index(vdb.index_name):
+        dimension = resolve_embedding_dimension(config)
+        pc.create_index(
+            name=vdb.index_name,
+            dimension=dimension,
+            metric="cosine",
+            spec=ServerlessSpec(cloud=vdb.cloud, region=vdb.region),
+        )
+        logger.info(
+            "pinecone: index %r created (dimension %d)", vdb.index_name, dimension
+        )
+
+
+def _prepare_mongodb(config: VetoshConfig) -> None:
+    from pymongo import MongoClient
+    from pymongo.operations import SearchIndexModel
+
+    vdb = config.vector_db
+    client = MongoClient(vdb.connection_string)
+    try:
+        db = client[vdb.database]
+        if vdb.collection not in db.list_collection_names():
+            db.create_collection(vdb.collection)
+        coll = db[vdb.collection]
+        if list(coll.list_search_indexes(vdb.vector_index)):
+            return
+        dimension = resolve_embedding_dimension(config)
+        try:
+            coll.create_search_index(
+                SearchIndexModel(
+                    definition={
+                        "fields": [
+                            {
+                                "type": "vector",
+                                "path": "embedding",
+                                "numDimensions": dimension,
+                                "similarity": "cosine",
+                            }
+                        ]
+                    },
+                    name=vdb.vector_index,
+                    type="vectorSearch",
+                )
+            )
+            logger.info(
+                "mongodb: vectorSearch index %r created (dimension %d); it "
+                "becomes queryable once Atlas finishes building it",
+                vdb.vector_index,
+                dimension,
+            )
+        except Exception as exc:  # noqa: BLE001 - plain MongoDB has no mongot
+            logger.warning(
+                "Could not create the vectorSearch index (%s). Vector search "
+                "needs MongoDB Atlas or the atlas-local image; create the "
+                "index manually if your deployment supports it.",
+                exc,
+            )
+    finally:
+        client.close()

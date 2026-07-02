@@ -3,7 +3,7 @@
 Each indexing pass runs in a fresh subprocess (Pathway builds a single global
 graph per process, and a restart is exactly how persistence-driven deletion is
 exercised). Passes use ``mode: static`` so the graph terminates, the test-only
-``mock`` embedder (no credentials), and the SQLite sink/accessor.
+``mock`` embedder (no credentials), and the embedded DuckDB sink/accessor.
 
 These are slower than the unit tests (~30-40s of Pathway startup per pass); run
 with ``-m "not slow"`` to skip.
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -32,7 +31,7 @@ def _write_config(tmp_path, docs_dir, store, persist_dir, *, persistence: bool) 
         "sources": [
             {"type": "fs", "path": str(docs_dir), "glob": "**/*", "mode": "static"}
         ],
-        "vector_db": {"type": "sqlite", "path": str(store), "table": "vetosh_embeddings"},
+        "vector_db": {"type": "duckdb", "path": str(store), "table": "vetosh_embeddings"},
         "embedder": {"type": "mock"},
         "splitter": {"type": "token_count", "chunk_size": 512, "chunk_overlap": 50},
         "persistence": {
@@ -62,10 +61,12 @@ def _run_pass(cfg_path: Path, cache_dir: Path) -> None:
 def _read_store(store: Path) -> list[dict]:
     if not store.exists():
         return []
-    conn = sqlite3.connect(store)
+    import duckdb
+
+    conn = duckdb.connect(str(store), read_only=True)
     try:
         rows = conn.execute(
-            "SELECT id, text, metadata FROM vetosh_embeddings"
+            "SELECT chunk_id, text, metadata FROM vetosh_embeddings"
         ).fetchall()
     finally:
         conn.close()
@@ -85,7 +86,7 @@ def env(tmp_path):
     return {
         "tmp": tmp_path,
         "docs": docs,
-        "store": tmp_path / "store.sqlite3",
+        "store": tmp_path / "store.duckdb",
         "persist": tmp_path / "persist",
         "cache": tmp_path / "cache",
     }
@@ -127,7 +128,7 @@ def test_persistence_on_and_off_give_same_vectors(tmp_path):
         docs.mkdir(parents=True)
         (docs / "a.txt").write_text("alpha document about cats")
         (docs / "b.txt").write_text("beta report about dogs and frameworks")
-        store = root / "store.sqlite3"
+        store = root / "store.duckdb"
         cfg = _write_config(root, docs, store, root / "persist", persistence=persistence)
         _run_pass(cfg, root / "cache")
         return {(r["text"], r["metadata"]["path"].split("/")[-1]) for r in _read_store(store)}

@@ -60,6 +60,23 @@ class PgVectorAccessor(AsyncVectorAccessor):
             )
         return results
 
+    async def stats(self) -> dict[str, Any]:
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT count(*) AS chunks,"
+                f"  count(DISTINCT metadata->>'path') AS documents,"
+                f"  max((metadata->>'seen_at')::bigint) AS last_indexed_at "
+                f"FROM {self._table}"
+            )
+        out: dict[str, Any] = {
+            "chunks": int(row["chunks"]),
+            "documents": int(row["documents"]),
+        }
+        if row["last_indexed_at"]:
+            out["last_indexed_at"] = int(row["last_indexed_at"])
+        return out
+
     async def close(self) -> None:
         if self._pool is not None:
             await self._pool.close()

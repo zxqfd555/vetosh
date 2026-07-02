@@ -1,10 +1,15 @@
-"""FastAPI web chat frontend.
+"""FastAPI web chat frontend (standalone, for split deployments).
 
 A thin, decoupled service: it serves the single-page chat UI and *proxies*
 requests to the configured vetosh API (``frontend.api_url``). The browser only
 ever talks to this frontend's own origin, so there is no CORS to configure and
-the API address stays server-side. Indexing, API and frontend can therefore each
-run on a separate worker/host.
+the API address stays server-side. Use it when the UI must live on a different
+host than the API; otherwise ``vetosh server`` already serves the same page on
+its own port (``server.serve_frontend``, on by default).
+
+The page and the proxy speak the versioned API surface: the browser calls
+``/api/v1/...`` on this origin and the proxy forwards to ``/api/v1/...`` on
+the upstream server.
 """
 
 from __future__ import annotations
@@ -22,10 +27,15 @@ _STATIC_DIR = Path(__file__).parent / "static"
 _INDEX_FILE = _STATIC_DIR / "index.html"
 
 # Endpoints on the upstream API that the frontend is allowed to proxy.
-_PROXY_ROUTES = {"rag": "/rag", "retrieve": "/retrieve"}
+_PROXY_ROUTES = {"rag": "/api/v1/rag", "retrieve": "/api/v1/retrieve"}
 
 
-def _load_index(title: str) -> str:
+def load_index(title: str) -> str:
+    """Return the chat page HTML with the configured title substituted.
+
+    Shared with the server's embedded-UI mode, so both serve one page.
+    """
+
     return _INDEX_FILE.read_text(encoding="utf-8").replace("__APP_TITLE__", title)
 
 
@@ -38,7 +48,7 @@ def create_app(config: VetoshConfig, *, client: httpx.AsyncClient | None = None)
 
     config.for_frontend()
     fe = config.frontend
-    index_html = _load_index(fe.title)
+    index_html = load_index(fe.title)
     owns_client = client is None
 
     @asynccontextmanager
@@ -58,7 +68,7 @@ def create_app(config: VetoshConfig, *, client: httpx.AsyncClient | None = None)
     async def index() -> HTMLResponse:
         return HTMLResponse(index_html)
 
-    @app.get("/api/config")
+    @app.get("/api/v1/config")
     async def frontend_config() -> JSONResponse:
         # Informational only (shown in the header); no secrets here.
         return JSONResponse({"title": fe.title, "api_url": fe.api_url})
@@ -81,11 +91,23 @@ def create_app(config: VetoshConfig, *, client: httpx.AsyncClient | None = None)
             payload = {"detail": upstream.text}
         return JSONResponse(payload, status_code=upstream.status_code)
 
-    @app.post("/api/rag")
+    @app.get("/api/v1/stats")
+    async def stats() -> JSONResponse:
+        try:
+            upstream = await client.get("/api/v1/stats")
+        except httpx.HTTPError:
+            return JSONResponse({"stats_available": False}, status_code=502)
+        try:
+            payload = upstream.json()
+        except ValueError:
+            payload = {"stats_available": False}
+        return JSONResponse(payload, status_code=upstream.status_code)
+
+    @app.post("/api/v1/rag")
     async def rag(request: Request) -> JSONResponse:
         return await _proxy("rag", request)
 
-    @app.post("/api/retrieve")
+    @app.post("/api/v1/retrieve")
     async def retrieve(request: Request) -> JSONResponse:
         return await _proxy("retrieve", request)
 

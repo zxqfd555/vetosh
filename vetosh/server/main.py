@@ -3,6 +3,19 @@
 Async and coroutine-based so network-bound calls to the vector DB and embedding
 provider don't exhaust a thread pool. Fully decoupled from the indexer: it only
 reads from the vector DB, so it can be scaled horizontally and independently.
+
+API surface
+-----------
+Endpoints are versioned under ``/api/v1`` (``/api/v1/retrieve``,
+``/api/v1/rag``, ``/api/v1/health``, ``/api/v1/config``). When the API evolves
+incompatibly, a ``/api/v2`` router is added next to v1 and v1 sticks around
+for a deprecation window. The original unversioned routes (``/retrieve``,
+``/rag``, ``/health``) are kept as deprecated aliases for compatibility.
+
+Unless ``server.serve_frontend`` is disabled, the chat UI is served on ``/``
+from this same process/port — same-origin, so no CORS and no separate
+frontend tier to run. The standalone ``vetosh frontend`` command remains for
+split deployments (UI host separate from the API host).
 """
 
 from __future__ import annotations
@@ -10,9 +23,11 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from vetosh import APP_NAME
 from vetosh.config.schema import VetoshConfig
 from vetosh.server.accessors import AsyncVectorAccessor, build_accessor
 from vetosh.server.embedder import AsyncEmbedder, build_embedder
@@ -49,7 +64,7 @@ def create_app(
     """Build the FastAPI app.
 
     The ``embedder``/``accessor``/``llm`` overrides exist for testing (inject a
-    mock embedder and a SQLite accessor); in production they are built from the
+    mock embedder and a DuckDB accessor); in production they are built from the
     config.
     """
 
@@ -61,6 +76,8 @@ def create_app(
     if llm is None and config.llm is not None:
         llm = build_llm(config.llm)
 
+    title = config.frontend.title if config.frontend else APP_NAME
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         try:
@@ -71,19 +88,17 @@ def create_app(
             if llm is not None:
                 await llm.close()
 
-    app = FastAPI(title="vetosh server", lifespan=lifespan)
+    app = FastAPI(title=f"{title} server", lifespan=lifespan)
+    v1 = APIRouter(prefix="/api/v1")
 
-    @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/retrieve", response_model=RetrieveResponse)
     async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         embedding = await embedder.embed(req.query)
         hits = await accessor.retrieve(embedding, req.k)
         return RetrieveResponse(results=[RetrieveResult(**h) for h in hits])
 
-    @app.post("/rag", response_model=RagResponse)
     async def rag(req: RetrieveRequest) -> RagResponse:
         if llm is None:
             raise HTTPException(
@@ -96,6 +111,43 @@ def create_app(
         return RagResponse(
             answer=answer, sources=[RetrieveResult(**h) for h in hits]
         )
+
+    async def stats() -> dict[str, Any]:
+        # Best-effort observability: backend identity + whatever the accessor
+        # can answer cheaply. Never fails the endpoint over a backend hiccup.
+        data: dict[str, Any] = {"backend": config.vector_db.type}
+        try:
+            data.update(await accessor.stats())
+        except Exception:  # noqa: BLE001 - stats are advisory
+            data["stats_available"] = False
+        return data
+
+    async def ui_config() -> dict[str, str]:
+        # Informational, consumed by the chat page; an empty api_url means
+        # "same origin" (embedded mode). No secrets here.
+        return {"title": title, "api_url": ""}
+
+    v1.get("/health")(health)
+    v1.post("/retrieve", response_model=RetrieveResponse)(retrieve)
+    v1.post("/rag", response_model=RagResponse)(rag)
+    v1.get("/stats")(stats)
+    v1.get("/config")(ui_config)
+    app.include_router(v1)
+
+    # Pre-versioning aliases, kept for compatibility; will be removed after a
+    # deprecation window. New clients must use /api/v1/*.
+    app.get("/health", deprecated=True)(health)
+    app.post("/retrieve", response_model=RetrieveResponse, deprecated=True)(retrieve)
+    app.post("/rag", response_model=RagResponse, deprecated=True)(rag)
+
+    if config.server.serve_frontend:
+        from vetosh.frontend.main import load_index
+
+        index_html = load_index(title)
+
+        @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+        async def index() -> HTMLResponse:
+            return HTMLResponse(index_html)
 
     return app
 

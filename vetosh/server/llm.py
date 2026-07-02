@@ -34,6 +34,34 @@ def _build_prompt(query: str, context: list[str]) -> str:
     return f"Context:\n{joined}\n\nQuestion: {query}"
 
 
+class MockLLM:
+    """Offline LLM scaffold: echoes the retrieved context (no provider needed).
+
+    Lets the full RAG/chat flow run with no API key — useful for testing the
+    indexer → server → frontend stack end-to-end. Replace with a real ``llm``
+    (e.g. ``openai``) for actual generated answers.
+    """
+
+    async def complete(self, query: str, context: list[str]) -> str:
+        if not context:
+            return (
+                "(mock LLM) No relevant context was retrieved for your question. "
+                "This is the offline scaffold — set an `llm` of type `openai` for "
+                "real answers."
+            )
+        snippet = " ".join(context[0].split())
+        if len(snippet) > 320:
+            snippet = snippet[:320] + "…"
+        return (
+            f"(mock LLM) Based on {len(context)} retrieved snippet(s), the most "
+            f'relevant one says:\n\n"{snippet}"\n\n'
+            "Configure an `llm` of type `openai` for a real generated answer."
+        )
+
+    async def close(self) -> None:
+        return None
+
+
 class OpenAIChat:
     def __init__(self, config) -> None:
         self._model = config.model or "gpt-4o-mini"
@@ -70,6 +98,8 @@ _OPENAI_COMPATIBLE = {"openai", "litellm"}
 
 
 def build_llm(config) -> AsyncLLM:
+    if config.type == "mock":
+        return MockLLM()
     if config.type in _OPENAI_COMPATIBLE:
         return OpenAIChat(config)
     raise ValueError(

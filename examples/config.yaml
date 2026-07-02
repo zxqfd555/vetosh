@@ -13,21 +13,79 @@ sources:
   #   object_id: ${GDRIVE_FOLDER_ID}
   #   service_user_credentials_file: ${GDRIVE_CREDENTIALS_FILE}
   #   file_name_pattern: "*.pdf"
+  # S3 / MinIO / any S3-compatible store (only_metadata):
+  # - type: s3
+  #   bucket: my-docs
+  #   path: reports/           # key prefix ("" = whole bucket)
+  #   access_key: ${AWS_ACCESS_KEY_ID}
+  #   secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+  #   # for MinIO / self-hosted:
+  #   # endpoint: http://localhost:9000
+  #   # region: us-east-1      # required with a custom endpoint
+  #   # with_path_style: true
+  # SharePoint (only_metadata; Pathway Scale license + vetosh[sharepoint]):
+  # - type: sharepoint
+  #   url: https://company.sharepoint.com/sites/MySite
+  #   tenant: ${SHAREPOINT_TENANT}
+  #   client_id: ${SHAREPOINT_CLIENT_ID}
+  #   cert_path: ./sharepoint.pem
+  #   thumbprint: ${SHAREPOINT_THUMBPRINT}
+  #   root_path: Shared Documents
 
+# Pick ONE vector database backend. Every backend is written through Pathway's
+# native `pw.io.*` connector in snapshot mode: additions, edits and deletions
+# in your sources become real upserts/deletes in the store.
 vector_db:
-  type: pgvector # or: milvus
-  connection_string: postgresql://user:pass@localhost/db
+  # Zero setup (default): an embedded DuckDB file with in-database vector
+  # search. No external service. Note: DuckDB is single-writer, so index with
+  # `mode: static` sources when the server reads the same file.
+  type: duckdb
+  path: ./embeddings.duckdb
   table: vetosh_embeddings
-  # for milvus:
+
+  # --- client-server backends (live indexing + serving concurrently) ---
+  # type: pgvector
+  # connection_string: postgresql://user:pass@localhost/db
+  # table: vetosh_embeddings
+
+  # type: qdrant
+  # host: localhost          # REST 6333 / gRPC 6334; collection auto-created
+  # collection: vetosh_embeddings
+  # api_key: ${QDRANT_API_KEY}
+
   # type: milvus
   # host: localhost
   # port: 19530
   # collection: vetosh_embeddings
 
+  # type: chroma              # collection must exist (cosine hnsw:space)
+  # host: localhost
+  # port: 8000
+  # collection: vetosh_embeddings
+
+  # type: weaviate            # collection must exist
+  # http_host: localhost
+  # http_port: 8080
+  # collection: VetoshEmbeddings
+  # api_key: ${WEAVIATE_API_KEY}
+
+  # type: pinecone            # index must exist with the embedder's dimension
+  # index_name: vetosh
+  # api_key: ${PINECONE_API_KEY}
+
+  # type: mongodb             # MongoDB Atlas Vector Search
+  # connection_string: ${MONGODB_CONNECTION_STRING}
+  # database: vetosh
+  # collection: vetosh_embeddings
+  # vector_index: vector_index
+
 embedder:
-  type: openai # or any xpack-supported embedder
+  type: openai # or: litellm, sentence_transformer (fully local), gemini, bedrock
   model: text-embedding-3-small
   api_key: ${OPENAI_API_KEY}
+  # Fully local, no credentials:
+  # type: sentence_transformer
+  # model: sentence-transformers/all-MiniLM-L6-v2
 
 splitter:
   type: token_count
@@ -42,12 +100,18 @@ persistence:
 server:
   host: 0.0.0.0
   port: 8000
+  # The chat UI is served on "/" from this same port (API lives under
+  # /api/v1). Set to false for a pure-API deployment.
+  serve_frontend: true
 
-frontend: # web chat UI; proxies to the API at api_url (run with `vetosh frontend`)
-  host: 0.0.0.0
-  port: 3000
-  api_url: http://localhost:8000
-  title: vetosh
+# Optional: standalone UI tier for split deployments only (UI on a different
+# host than the API; run with `vetosh frontend`). Not needed otherwise — the
+# server already serves the chat page.
+# frontend:
+#   host: 0.0.0.0
+#   port: 3000
+#   api_url: http://localhost:8000
+#   title: vetosh
 
 llm: # optional, for the /rag endpoint
   type: openai

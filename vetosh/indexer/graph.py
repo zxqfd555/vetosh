@@ -9,7 +9,9 @@ Pipeline
 ``pw.io.fs.read(format="only_metadata")``  ->  parse UDF (reads bytes from the
 path, extracts text via an xpack parser, memoised + persistently cached)  ->
 splitter (xpack)  ->  flatten to one row per chunk  ->  embedder (xpack)  ->
-vector-DB sink (pgvector / milvus / sqlite).
+vector-DB sink (duckdb / pgvector / milvus / qdrant / chroma / weaviate /
+pinecone / mongodb) — every sink is a native ``pw.io`` connector writing in
+snapshot/upsert mode, so retractions become real deletes in the target store.
 
 Deletion semantics
 ------------------
@@ -31,7 +33,6 @@ import json
 import logging
 from typing import Any
 
-import numpy as np
 import pathway as pw
 
 from vetosh.config.schema import VetoshConfig
@@ -57,12 +58,6 @@ def _json_to_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "value"):
         return dict(value.value)
     return dict(value)
-
-
-def _to_list(embedding: Any) -> list[float]:
-    if isinstance(embedding, np.ndarray):
-        return embedding.astype(float).tolist()
-    return [float(x) for x in embedding]
 
 
 # ---------------------------------------------------------------------------
@@ -283,14 +278,36 @@ def build_graph(
 
 def _write_sink(table: pw.Table, config: VetoshConfig) -> None:
     vdb = config.vector_db
-    if vdb.type == "pgvector":
+    if vdb.type == "duckdb":
+        _write_duckdb(table, vdb)
+    elif vdb.type == "pgvector":
         _write_pgvector(table, vdb)
     elif vdb.type == "milvus":
         _write_milvus(table, vdb)
-    elif vdb.type == "sqlite":
-        _write_sqlite(table, vdb)
+    elif vdb.type == "qdrant":
+        _write_qdrant(table, vdb)
+    elif vdb.type == "chroma":
+        _write_chroma(table, vdb)
+    elif vdb.type == "weaviate":
+        _write_weaviate(table, vdb)
+    elif vdb.type == "pinecone":
+        _write_pinecone(table, vdb)
+    elif vdb.type == "mongodb":
+        _write_mongodb(table, vdb)
     else:  # pragma: no cover - guarded by schema
         raise ValueError(f"Unsupported vector_db type: {vdb.type!r}")
+
+
+@pw.udf
+def _metadata_as_json(metadata: pw.Json) -> str:
+    """Serialize the metadata dict to a JSON string.
+
+    Chroma / Weaviate / Pinecone restrict record metadata to scalar values, so
+    the source metadata travels as one JSON string field and the matching
+    accessor parses it back.
+    """
+
+    return json.dumps(_json_to_dict(metadata))
 
 
 def _write_pgvector(table: pw.Table, vdb) -> None:
@@ -321,37 +338,133 @@ def _write_milvus(table: pw.Table, vdb) -> None:
     )
 
 
-def _write_sqlite(table: pw.Table, vdb) -> None:
-    """Test-only sink: upsert/delete rows in a local SQLite vector store.
+def _write_duckdb(table: pw.Table, vdb) -> None:
+    """Write to an embedded DuckDB file via Pathway's native connector.
 
-    Uses ``pw.io.subscribe`` so we get the native ``is_addition`` flag and can
-    INSERT on additions and DELETE (by id) on retractions, keeping the table in
-    sync with the current chunk set — the same store the SQLite accessor reads.
+    Snapshot mode keyed by ``chunk_id`` keeps the table an exact replica of the
+    current chunk set (real upserts/deletes). Embeddings land as native
+    ``DOUBLE[]`` lists that the server queries in-database with
+    ``list_cosine_similarity``. The metadata travels as a JSON string: DuckDB
+    compares identifiers case-insensitively and stores ``pw.Json`` as text
+    anyway, and one explicit column keeps the accessor symmetric with the
+    other backends.
     """
 
-    from vetosh.server.accessors.sqlite import connect
+    out = table.select(
+        chunk_id=pw.this.chunk_id,
+        text=pw.this.text,
+        metadata=_metadata_as_json(pw.this.metadata),
+        embedding=pw.this.embedding,
+    )
+    pw.io.duckdb.write(
+        out,
+        table_name=vdb.table,
+        database=vdb.path,
+        output_table_type="snapshot",
+        primary_key=[out.chunk_id],
+        init_mode="create_if_not_exists",
+    )
 
-    conn = connect(vdb.path, vdb.table)
-    table_name = vdb.table
 
-    def on_change(key, row, time, is_addition):  # noqa: ANN001 - pathway callback
-        row_id = row["chunk_id"]
-        if is_addition:
-            conn.execute(
-                f"INSERT OR REPLACE INTO {table_name} (id, text, metadata, embedding) "
-                f"VALUES (?, ?, ?, ?)",
-                (
-                    row_id,
-                    row["text"],
-                    json.dumps(_json_to_dict(row["metadata"])),
-                    json.dumps(_to_list(row["embedding"])),
-                ),
-            )
-        else:
-            conn.execute(f"DELETE FROM {table_name} WHERE id = ?", (row_id,))
-        conn.commit()
+def _write_qdrant(table: pw.Table, vdb) -> None:
+    """Write points to Qdrant (auto-creates a cosine collection if missing).
 
-    pw.io.subscribe(table, on_change=on_change)
+    The sink keys points internally per row, so additions/updates/deletions
+    map to native upserts/deletes; the remaining columns (``chunk_id``,
+    ``text``, ``metadata``) become the point payload.
+    """
+
+    pw.io.qdrant.write(
+        table,
+        vdb.grpc_url(),
+        vdb.collection,
+        vector=table.embedding,
+        api_key=vdb.api_key,
+    )
+
+
+def _write_chroma(table: pw.Table, vdb) -> None:
+    """Write to a pre-existing ChromaDB collection (cosine ``hnsw:space``)."""
+
+    out = table.select(
+        chunk_id=pw.this.chunk_id,
+        text=pw.this.text,
+        metadata=_metadata_as_json(pw.this.metadata),
+        embedding=pw.this.embedding,
+    )
+    pw.io.chroma.write(
+        out,
+        vdb.collection,
+        primary_key=out.chunk_id,
+        embedding=out.embedding,
+        document=out.text,
+        metadata_columns=[out.metadata],
+        host=vdb.host,
+        port=vdb.port,
+        ssl=vdb.ssl,
+        headers=vdb.headers,
+        tenant=vdb.tenant,
+        database=vdb.database,
+    )
+
+
+def _write_weaviate(table: pw.Table, vdb) -> None:
+    """Write to a pre-existing Weaviate collection (object vector + properties)."""
+
+    out = table.select(
+        chunk_id=pw.this.chunk_id,
+        text=pw.this.text,
+        metadata=_metadata_as_json(pw.this.metadata),
+        embedding=pw.this.embedding,
+    )
+    pw.io.weaviate.write(
+        out,
+        vdb.collection,
+        primary_key=out.chunk_id,
+        vector=out.embedding,
+        http_host=vdb.http_host,
+        http_port=vdb.http_port,
+        http_secure=vdb.http_secure,
+        api_key=vdb.api_key,
+    )
+
+
+def _write_pinecone(table: pw.Table, vdb) -> None:
+    """Write to a pre-existing Pinecone index (dimension must match)."""
+
+    out = table.select(
+        chunk_id=pw.this.chunk_id,
+        text=pw.this.text,
+        metadata=_metadata_as_json(pw.this.metadata),
+        embedding=pw.this.embedding,
+    )
+    pw.io.pinecone.write(
+        out,
+        vdb.index_name,
+        primary_key=out.chunk_id,
+        vector=out.embedding,
+        api_key=vdb.api_key,
+        host=vdb.host,
+        namespace=vdb.namespace,
+        metadata_columns=[out.text, out.metadata],
+    )
+
+
+def _write_mongodb(table: pw.Table, vdb) -> None:
+    """Write documents to MongoDB / Atlas in snapshot mode.
+
+    One document per chunk with the embedding as a BSON number array — exactly
+    the shape Atlas Vector Search queries with ``$vectorSearch`` (the user
+    creates the ``vectorSearch`` index; Pathway cannot know the dimension).
+    """
+
+    pw.io.mongodb.write(
+        table,
+        connection_string=vdb.connection_string,
+        database=vdb.database,
+        collection=vdb.collection,
+        output_table_type="snapshot",
+    )
 
 
 def _libpq_settings(connection_string: str) -> dict[str, Any]:
@@ -394,10 +507,23 @@ def persistence_config(config: VetoshConfig):
     return pw.persistence.Config(backend)
 
 
-def run_indexer(config: VetoshConfig, **build_kwargs: Any) -> None:
-    """Build the graph and run it to completion (streaming)."""
+def run_indexer(
+    config: VetoshConfig, *, prepare: bool = True, **build_kwargs: Any
+) -> None:
+    """Prepare the backend, build the graph and run it (streaming).
+
+    ``prepare=False`` is used by spawned worker processes: the spawn parent
+    has already created the target (see ``vetosh.indexer.main``).
+    """
 
     if config.pathway_license_key:
         pw.set_license_key(config.pathway_license_key)
+    config.for_indexer()
+    if prepare:
+        # Create the target table/collection/index if missing — the connectors
+        # auto-create only for duckdb and qdrant (see prepare.py).
+        from vetosh.indexer.prepare import prepare_backend
+
+        prepare_backend(config)
     build_graph(config, **build_kwargs)
     pw.run(persistence_config=persistence_config(config))

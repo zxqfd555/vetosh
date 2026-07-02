@@ -29,11 +29,13 @@ from vetosh import APP_NAME
 EMBEDDER_CHOICES = ["openai", "litellm", "sentence_transformer", "gemini", "bedrock"]
 
 # Document source types offered by the wizard. Only sources with an
-# only_metadata read mode are supported (filesystem, Google Drive). S3/SharePoint
-# slot in here (+ a branch in Wizard._collect_source) once they gain that mode.
+# only_metadata read mode are supported. SharePoint slots in here (+ a branch
+# in Wizard._collect_source) once vetosh wires its fetcher.
 SOURCE_TYPES: list[tuple[str, str]] = [
     ("fs", "Filesystem (local directory)"),
     ("gdrive", "Google Drive"),
+    ("s3", "S3 / MinIO / S3-compatible bucket"),
+    ("sharepoint", "Microsoft SharePoint (Scale license)"),
 ]
 
 # Default environment-variable references per provider, so generated configs
@@ -100,21 +102,65 @@ def build_config(answers: dict[str, Any]) -> dict[str, Any]:
 
 
 def _vector_db_section(answers: dict[str, Any]) -> dict[str, Any]:
-    if answers["vector_db_type"] == "milvus":
-        section: dict[str, Any] = {
-            "type": "milvus",
-            "collection": answers.get("collection", DEFAULT_COLLECTION),
+    vdb_type = answers["vector_db_type"]
+    collection = answers.get("collection", DEFAULT_COLLECTION)
+    if vdb_type == "duckdb":
+        return {
+            "type": "duckdb",
+            "path": answers["duckdb_path"],
+            "table": collection,
         }
+    if vdb_type == "milvus":
+        section: dict[str, Any] = {"type": "milvus", "collection": collection}
         if answers.get("milvus_uri"):
             section["uri"] = answers["milvus_uri"]
         else:
             section["host"] = answers.get("milvus_host", "localhost")
             section["port"] = answers.get("milvus_port", 19530)
         return section
+    if vdb_type == "qdrant":
+        section = {
+            "type": "qdrant",
+            "host": answers.get("qdrant_host", "localhost"),
+            "collection": collection,
+        }
+        if answers.get("qdrant_api_key"):
+            section["api_key"] = answers["qdrant_api_key"]
+        return section
+    if vdb_type == "chroma":
+        return {
+            "type": "chroma",
+            "host": answers.get("chroma_host", "localhost"),
+            "port": answers.get("chroma_port", 8000),
+            "collection": collection,
+        }
+    if vdb_type == "weaviate":
+        section = {
+            "type": "weaviate",
+            "http_host": answers.get("weaviate_host", "localhost"),
+            "http_port": answers.get("weaviate_port", 8080),
+            "collection": answers.get("weaviate_collection", "VetoshEmbeddings"),
+        }
+        if answers.get("weaviate_api_key"):
+            section["api_key"] = answers["weaviate_api_key"]
+        return section
+    if vdb_type == "pinecone":
+        return {
+            "type": "pinecone",
+            "index_name": answers["pinecone_index"],
+            "api_key": answers.get("pinecone_api_key", "${PINECONE_API_KEY}"),
+        }
+    if vdb_type == "mongodb":
+        return {
+            "type": "mongodb",
+            "connection_string": answers["mongodb_connection_string"],
+            "database": answers["mongodb_database"],
+            "collection": collection,
+        }
     return {
         "type": "pgvector",
         "connection_string": answers["pg_connection_string"],
-        "table": answers.get("collection", DEFAULT_COLLECTION),
+        "table": collection,
     }
 
 
@@ -359,7 +405,39 @@ class Wizard:
             if pattern:
                 source["file_name_pattern"] = pattern
             return source
-        # Future source types (s3, sharepoint) branch here.
+        if stype == "s3":
+            bucket = self.p.text("Bucket name", required=True)
+            prefix = self.p.text("Key prefix to index (blank = whole bucket)", default="")
+            endpoint = self.p.text(
+                "Custom endpoint (blank for AWS; e.g. http://localhost:9000 for MinIO)",
+                default="",
+            )
+            source = {
+                "type": "s3",
+                "bucket": bucket,
+                "path": prefix,
+                "access_key": "${AWS_ACCESS_KEY_ID}",
+                "secret_access_key": "${AWS_SECRET_ACCESS_KEY}",
+            }
+            if endpoint:
+                source["endpoint"] = endpoint
+                source["with_path_style"] = True  # the norm for self-hosted S3
+                # Required with a custom endpoint (signature scope).
+                source["region"] = self.p.text("Region", default="us-east-1")
+            return source
+        if stype == "sharepoint":
+            return {
+                "type": "sharepoint",
+                "url": self.p.text(
+                    "Site URL (https://company.sharepoint.com/sites/MySite)", required=True
+                ),
+                "tenant": self.p.text("Tenant id (GUID)", required=True),
+                "client_id": self.p.text("Client id of the app registration", required=True),
+                "cert_path": self.p.text("Certificate .pem path", default="./sharepoint.pem"),
+                "thumbprint": self.p.text("Certificate thumbprint", required=True),
+                "root_path": self.p.text("Root path to index (e.g. Shared Documents)", required=True),
+            }
+        # Future source types (pyfilesystem) branch here.
         raise ValueError(f"Unsupported source type: {stype!r}")  # pragma: no cover
 
     # -- the full flow -------------------------------------------------------
@@ -383,23 +461,78 @@ class Wizard:
             answers["sources"] = self._collect_sources()
 
         self._section("Vector database")
-        vdb_idx = self.p.select("Vector database:", ["pgvector", "milvus"], default_index=0)
-        answers["vector_db_type"] = ["pgvector", "milvus"][vdb_idx]
+        vdb_values = [
+            "duckdb",
+            "pgvector",
+            "qdrant",
+            "milvus",
+            "chroma",
+            "weaviate",
+            "pinecone",
+            "mongodb",
+        ]
+        vdb_labels = [
+            "duckdb (local file · zero setup · in-database vector search)",
+            "pgvector (Postgres)",
+            "qdrant",
+            "milvus",
+            "chroma",
+            "weaviate",
+            "pinecone",
+            "mongodb (Atlas Vector Search)",
+        ]
+        vdb_idx = self.p.select("Vector database:", vdb_labels, default_index=0)
+        answers["vector_db_type"] = vdb_values[vdb_idx]
 
         self._section("Vector DB connection")
-        if answers["vector_db_type"] == "milvus":
+        vdb_type = answers["vector_db_type"]
+        if vdb_type == "duckdb":
+            answers["duckdb_path"] = self.p.text(
+                "DuckDB file path", default="./embeddings.duckdb"
+            )
+        elif vdb_type == "milvus":
             uri = self.p.text("Milvus URI (leave blank to use host + port)", default="")
             answers["milvus_uri"] = uri or None
             if not answers["milvus_uri"]:
                 answers["milvus_host"] = self.p.text("Milvus host", default="localhost")
                 answers["milvus_port"] = int(self.p.text("Milvus port", default="19530"))
+        elif vdb_type == "qdrant":
+            answers["qdrant_host"] = self.p.text("Qdrant host", default="localhost")
+            answers["qdrant_api_key"] = self.p.text(
+                "Qdrant API key (blank for none)", default=""
+            ) or None
+        elif vdb_type == "chroma":
+            answers["chroma_host"] = self.p.text("Chroma host", default="localhost")
+            answers["chroma_port"] = int(self.p.text("Chroma port", default="8000"))
+        elif vdb_type == "weaviate":
+            answers["weaviate_host"] = self.p.text("Weaviate host", default="localhost")
+            answers["weaviate_port"] = int(self.p.text("Weaviate HTTP port", default="8080"))
+            answers["weaviate_collection"] = self.p.text(
+                "Weaviate collection (capitalized)", default="VetoshEmbeddings"
+            )
+            answers["weaviate_api_key"] = self.p.text(
+                "Weaviate API key (blank for none)", default=""
+            ) or None
+        elif vdb_type == "pinecone":
+            answers["pinecone_index"] = self.p.text("Pinecone index name", required=True)
+            answers["pinecone_api_key"] = self.p.text(
+                "Pinecone API key", default="${PINECONE_API_KEY}"
+            )
+        elif vdb_type == "mongodb":
+            answers["mongodb_connection_string"] = self.p.text(
+                "MongoDB connection string (mongodb+srv://... for Atlas)", required=True
+            )
+            answers["mongodb_database"] = self.p.text("Database name", required=True)
         else:
             answers["pg_connection_string"] = self.p.text(
                 "Postgres connection string (postgresql://user:pass@host/db)", required=True
             )
 
-        self._section("Collection / table name")
-        answers["collection"] = self.p.text("Collection / table name", default=DEFAULT_COLLECTION)
+        if vdb_type not in {"pinecone", "weaviate"}:  # collected above for those
+            self._section("Collection / table name")
+            answers["collection"] = self.p.text(
+                "Collection / table name", default=DEFAULT_COLLECTION
+            )
 
         self._section("Embedder")
         emb_idx = self.p.select("Embedder:", EMBEDDER_CHOICES, default_index=0)

@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# vetosh test-run runtime artifacts
+examples/testrun/data/
+
+# benchmark datasets and results (large, generated)
+benchmarks/*/datasets/
+benchmarks/*/results/
+benchmarks/*/compat/*.so

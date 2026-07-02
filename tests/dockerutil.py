@@ -24,12 +24,40 @@ def docker_available() -> bool:
 
 
 def free_port() -> int:
+    """Dynamically allocate a free TCP port (never hardcode host ports —
+    anything may already be listening on a fixed localhost port)."""
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
+        s.bind(("", 0))
         return s.getsockname()[1]
 
 
-def run_container(image: str, *, ports: dict[int, int], env: dict[str, str]) -> str:
+def free_port_range(span: int, attempts: int = 50) -> int | None:
+    """Find ``span`` consecutive free ports and return the first one.
+
+    Needed by services that advertise absolute ports to clients (e.g.
+    Pinecone Local), where container ports must be published 1:1.
+    """
+
+    for _ in range(attempts):
+        base = free_port()
+        try:
+            for port in range(base, base + span):
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(("", port))
+        except OSError:
+            continue
+        return base
+    return None
+
+
+def run_container(
+    image: str,
+    *,
+    ports: dict[int, int],
+    env: dict[str, str],
+    command: list[str] | None = None,
+) -> str:
     """Start a detached container and return its id. ``ports`` maps host->container."""
 
     cmd = ["docker", "run", "-d", "--rm"]
@@ -38,6 +66,8 @@ def run_container(image: str, *, ports: dict[int, int], env: dict[str, str]) -> 
     for k, v in env.items():
         cmd += ["-e", f"{k}={v}"]
     cmd.append(image)
+    if command:
+        cmd += command
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         raise RuntimeError(f"docker run failed: {result.stderr}")

@@ -25,6 +25,17 @@ class AsyncVectorAccessor(ABC):
     async def close(self) -> None:
         """Release any underlying connections / pools."""
 
+    async def stats(self) -> dict[str, Any]:
+        """Lightweight backend statistics for observability.
+
+        Best-effort keys: ``chunks`` (row/point count), ``documents``
+        (distinct source objects, where cheap), ``last_indexed_at`` (unix
+        seconds, where cheap). Returns ``{}`` when the backend cannot answer
+        cheaply; must never raise for routine unavailability.
+        """
+
+        return {}
+
     async def __aenter__(self) -> "AsyncVectorAccessor":
         return self
 

@@ -57,6 +57,12 @@ class MilvusAccessor(AsyncVectorAccessor):
             )
         return results
 
+    async def stats(self) -> dict[str, Any]:
+        client = await self._ensure_client()
+        info = await client.get_collection_stats(self._collection)
+        count = info.get("row_count") if isinstance(info, dict) else None
+        return {"chunks": int(count)} if count is not None else {}
+
     async def close(self) -> None:
         if self._client is not None:
             await self._client.close()

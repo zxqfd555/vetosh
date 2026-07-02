@@ -34,7 +34,7 @@ def test_serves_chat_page():
 
 def test_config_endpoint_reports_api_url():
     with TestClient(create_app(_config(api_url="http://server:8000"))) as client:
-        body = client.get("/api/config").json()
+        body = client.get("/api/v1/config").json()
     assert body == {"title": "MyBot", "api_url": "http://server:8000"}
 
 
@@ -52,11 +52,12 @@ def test_proxies_rag_to_upstream():
 
     app = create_app(_config(), client=_mock_upstream(handler))
     with TestClient(app) as client:
-        resp = client.post("/api/rag", json={"query": "meaning?", "k": 3})
+        resp = client.post("/api/v1/rag", json={"query": "meaning?", "k": 3})
 
     assert resp.status_code == 200
     assert resp.json()["answer"] == "42"
-    assert captured["url"].endswith("/rag")
+    # The proxy targets the versioned API surface on the upstream server.
+    assert captured["url"].endswith("/api/v1/rag")
     assert captured["body"] == {"query": "meaning?", "k": 3}
 
 
@@ -66,7 +67,7 @@ def test_proxy_forwards_upstream_error_status():
 
     app = create_app(_config(), client=_mock_upstream(handler))
     with TestClient(app) as client:
-        resp = client.post("/api/rag", json={"query": "x", "k": 1})
+        resp = client.post("/api/v1/rag", json={"query": "x", "k": 1})
 
     assert resp.status_code == 501
     assert "llm" in resp.json()["detail"]
@@ -78,7 +79,7 @@ def test_proxy_handles_unreachable_api():
 
     app = create_app(_config(api_url="http://down:9999"), client=_mock_upstream(handler))
     with TestClient(app) as client:
-        resp = client.post("/api/rag", json={"query": "x", "k": 1})
+        resp = client.post("/api/v1/rag", json={"query": "x", "k": 1})
 
     assert resp.status_code == 502
     assert "Could not reach the API" in resp.json()["detail"]

@@ -1,0 +1,57 @@
+# vetosh — ready-to-run test config (SQLite scaffold + real OpenAI)
+#
+#   - vector_db: sqlite   (local file, linear-scan retrieval — dev scaffold)
+#   - embedder:  openai    (real semantic embeddings)
+#   - llm:       openai    (real generated answers on /rag)
+#
+# Requires OPENAI_API_KEY in the environment. To run fully offline with no key,
+# switch embedder/llm to `type: mock` (commented below).
+#
+# Paths are relative to the repository root — run the commands from there.
+
+# pathway_license_key: ${PATHWAY_LICENSE_KEY}   # optional, free: https://pathway.com/framework/get-license
+
+sources:
+  - type: fs
+    path: ./examples/testrun/documents
+    glob: "**/*"
+    mode: static # index once and exit; use "streaming" to keep watching
+
+vector_db:
+  type: sqlite
+  path: ./examples/testrun/data/embeddings.db
+  table: embeddings
+
+embedder:
+  type: openai
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+  # offline alternative (no key, no network):
+  # type: mock
+
+splitter:
+  type: token_count
+  chunk_size: 512
+  chunk_overlap: 50
+
+persistence:
+  enabled: true
+  backend: filesystem
+  path: ./examples/testrun/data/persistence
+
+server:
+  host: 0.0.0.0
+  port: 8000
+
+llm:
+  type: openai
+  model: gpt-4o-mini
+  api_key: ${OPENAI_API_KEY}
+  # offline alternative (no key):
+  # type: mock
+
+frontend:
+  host: 0.0.0.0
+  port: 3000
+  api_url: http://localhost:8000
+  title: vetosh test run

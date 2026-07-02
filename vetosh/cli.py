@@ -3,6 +3,7 @@
 Subcommands:
   vetosh indexer    --config FILE   Build & run the Pathway indexing graph
   vetosh server     --config FILE   Start the FastAPI retrieval/RAG server
+  vetosh up         --config FILE   Run indexer + server together (dev/demo)
   vetosh quickstart                 Interactive config-generation wizard
 """
 
@@ -22,6 +23,8 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("indexer", add_help=False, help="Run the indexer")
     sub.add_parser("server", add_help=False, help="Run the server")
+    sub.add_parser("up", add_help=False, help="Run indexer + server together")
+    sub.add_parser("demo", add_help=False, help="Zero-to-chat demo on a bundled corpus")
     sub.add_parser("frontend", add_help=False, help="Run the web chat frontend")
     sub.add_parser("quickstart", add_help=False, help="Interactive config wizard")
 
@@ -38,6 +41,14 @@ def main(argv: list[str] | None = None) -> None:
 
         server_args = _parse_config_arg("server", rest)
         run(load_server_config(server_args.config))
+    elif args.command == "up":
+        from vetosh.up import main as up_main
+
+        up_main(rest)
+    elif args.command == "demo":
+        from vetosh.demo import main as demo_main
+
+        demo_main(rest)
     elif args.command == "frontend":
         from vetosh.frontend.config import load_frontend_config
         from vetosh.frontend.main import run

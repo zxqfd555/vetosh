@@ -114,6 +114,7 @@
   <header>
     <div class="logo"></div>
     <div class="title">__APP_TITLE__</div>
+    <div class="api" id="statsLabel" title="live index statistics"></div>
     <div class="api" id="apiLabel"></div>
   </header>
 
@@ -149,10 +150,33 @@
   const main = document.getElementById("main");
   let busy = false;
 
-  // Show which API this frontend proxies to (informational).
-  fetch("/api/config").then(r => r.json()).then(c => {
+  // Show which API this page talks to (informational; empty = same origin).
+  fetch("/api/v1/config").then(r => r.json()).then(c => {
     if (c && c.api_url) document.getElementById("apiLabel").textContent = "API · " + c.api_url;
   }).catch(() => {});
+
+  // Live observability strip: backend, index size, freshness, last latency.
+  let lastAnswerMs = null;
+  function age(unixSeconds) {
+    const s = Math.max(0, Math.round(Date.now() / 1000 - unixSeconds));
+    if (s < 60) return s + "s";
+    if (s < 3600) return Math.round(s / 60) + "m";
+    return Math.round(s / 3600) + "h";
+  }
+  async function refreshStats() {
+    try {
+      const s = await fetch("/api/v1/stats").then(r => r.json());
+      const parts = [];
+      if (s.backend) parts.push(s.backend);
+      if (typeof s.chunks === "number") parts.push(s.chunks + " chunks");
+      if (typeof s.documents === "number") parts.push(s.documents + " docs");
+      if (s.last_indexed_at) parts.push("indexed " + age(s.last_indexed_at) + " ago");
+      if (lastAnswerMs !== null) parts.push("last answer " + (lastAnswerMs / 1000).toFixed(1) + "s");
+      document.getElementById("statsLabel").textContent = parts.join(" · ");
+    } catch (e) { /* stats are advisory */ }
+  }
+  refreshStats();
+  setInterval(refreshStats, 5000);
 
   function escapeHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -241,11 +265,14 @@
     const typing = addMessage("assistant", '<div class="dots"><span></span><span></span><span></span></div>');
 
     try {
-      const res = await fetch("/api/rag", {
+      const startedAt = performance.now();
+      const res = await fetch("/api/v1/rag", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: query, k: 5 }),
       });
+      lastAnswerMs = performance.now() - startedAt;
+      refreshStats();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const detail = (data && data.detail) ? data.detail : ("Request failed (" + res.status + ")");
@@ -257,7 +284,7 @@
       }
     } catch (err) {
       typing.bubble.classList.add("error");
-      typing.bubble.textContent = "Network error: could not reach the frontend server.";
+      typing.bubble.textContent = "Network error: could not reach the server.";
     } finally {
       setBusy(false);
       input.focus();

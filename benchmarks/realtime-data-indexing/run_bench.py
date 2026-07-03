@@ -29,11 +29,13 @@ SAMPLE_INTERVAL = 3.0
 # (Chunk commits are bursty — the embedding backlog of a large commit can
 # delay the next flush arbitrarily — but during that backlog the CPU burns
 # dozens of cores, so the combination is unambiguous.)
-STABLE_WINDOW = 90.0
+STABLE_WINDOW = 180.0
 # Below this sustained CPU rate the indexer counts as idle. Must sit between
-# the multi-worker idle hum (~0.2 cores per worker process) and the embedding
-# phase (tens of cores).
-IDLE_CORES = 6.0
+# the streaming re-scan hum (the fs connector continuously re-stats every
+# file: ~5 cores per 240k files) and the embedding phase (50-90 cores).
+# A false "idle" is harmless while chunks are still growing — termination
+# requires BOTH conditions — so this errs high.
+IDLE_CORES = 30.0
 
 
 def _compose(*args: str, size: str, capture: bool = False) -> subprocess.CompletedProcess:
@@ -112,18 +114,25 @@ def _wait_http(url: str, timeout: float, message: str) -> None:
     raise TimeoutError(message)
 
 
-def _accuracy(base: str, questions: list[dict], k: int) -> tuple[int, int]:
+def _accuracy(
+    base: str, questions: list[dict], k: int
+) -> tuple[int, int, list[dict]]:
     hits = 0
+    misses: list[dict] = []
     for q in questions:
         resp = httpx.post(
             f"{base}/api/v1/retrieve", json={"query": q["query"], "k": k}, timeout=120
         )
         resp.raise_for_status()
-        paths = {
-            Path(r["metadata"].get("path", "")).name for r in resp.json()["results"]
-        }
-        hits += q["expected_file"] in paths
-    return hits, len(questions)
+        results = resp.json()["results"]
+        paths = [Path(r["metadata"].get("path", "")).name for r in results]
+        if q["expected_file"] in paths:
+            hits += 1
+        else:
+            misses.append(
+                {"expected": q["expected_file"], "query": q["query"][:120], "got": paths}
+            )
+    return hits, len(questions), misses
 
 
 def main() -> None:
@@ -147,6 +156,10 @@ def main() -> None:
     os.environ["BENCH_QDRANT_PORT"] = str(args.qdrant_port)
 
     print(f"== dataset {args.size}: {docs_count} files, {len(questions)} questions")
+    # Always start from a clean slate — leftovers from an interrupted run
+    # (a pre-filled Qdrant, an old indexer) would silently corrupt every
+    # measurement.
+    _compose("down", "-v", size=args.size)
     _compose("up", "-d", "qdrant", size=args.size)
     _wait_http(
         f"http://127.0.0.1:{args.qdrant_port}/readyz", 120, "qdrant not ready"
@@ -169,6 +182,10 @@ def main() -> None:
     # "indexing finished" is detected by the chunk counter going stable: it
     # grew at least once and has not changed for STABLE_WINDOW seconds.
     # Indexing time = the moment of the last observed increase.
+    # The CSV is appended live, so an interrupted run keeps its memory curve.
+    csv_path = results_dir / f"{args.size}-memory.csv"
+    csv_path.write_text("elapsed_s,rss_mb,hwm_mb,chunks\n")
+
     samples: list[tuple[float, int, int, int]] = []  # (s, rss_kb, hwm_kb, chunks)
     last_count = 0
     last_change = started
@@ -193,9 +210,13 @@ def main() -> None:
                     last_busy = now
             prev_cpu, prev_time, cpu_seconds = cpu, now, cpu
         elapsed = now - started
-        samples.append(
-            (elapsed, status.get("VmRSS", 0), status.get("VmHWM", 0), last_count)
-        )
+        sample = (elapsed, status.get("VmRSS", 0), status.get("VmHWM", 0), last_count)
+        samples.append(sample)
+        with csv_path.open("a") as fh:
+            fh.write(
+                f"{sample[0]:.1f},{sample[1] / 1024:.1f},"
+                f"{sample[2] / 1024:.1f},{sample[3]}\n"
+            )
         print(
             f"\r   t={elapsed:7.0f}s  rss={status.get('VmRSS', 0) / 1024:7.1f} MB  "
             f"peak={status.get('VmHWM', 0) / 1024:7.1f} MB  chunks={last_count}",
@@ -203,7 +224,10 @@ def main() -> None:
             flush=True,
         )
         if (
-            last_count > 0
+            # Every document yields at least one chunk, so completion is
+            # impossible before the counter reaches the document count —
+            # this cleanly excludes the low-CPU initial-scan phase.
+            last_count >= docs_count
             and now - last_change >= STABLE_WINDOW
             and now - last_busy >= STABLE_WINDOW
         ):
@@ -222,7 +246,7 @@ def main() -> None:
     db_bytes = int(du.stdout.split()[0]) if du.returncode == 0 and du.stdout else None
 
     stats = httpx.get(f"{base}/api/v1/stats", timeout=60).json()
-    hits, total = _accuracy(base, questions, args.top_k)
+    hits, total, misses = _accuracy(base, questions, args.top_k)
 
     # Peak = highest sampled TOTAL RSS across the container's processes (the
     # summed VmHWM in the CSV is only an upper bound for multi-process runs).
@@ -248,15 +272,10 @@ def main() -> None:
         "embedder": "sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)",
         # Standard text page ≈ 2000 characters (≈ bytes for English text).
         "approx_text_pages": int(size_mb * 1024 * 1024 / 2000),
+        # Which questions missed top-k, with what came back instead.
+        "accuracy_misses": misses,
     }
     (results_dir / f"{args.size}-summary.json").write_text(json.dumps(summary, indent=2))
-    csv_path = results_dir / f"{args.size}-memory.csv"
-    csv_path.write_text(
-        "elapsed_s,rss_mb,hwm_mb,chunks\n"
-        + "\n".join(
-            f"{t:.1f},{r / 1024:.1f},{h / 1024:.1f},{c}" for t, r, h, c in samples
-        )
-    )
 
     import matplotlib
 

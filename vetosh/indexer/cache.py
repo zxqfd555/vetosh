@@ -92,7 +92,16 @@ class ParseCache:
         # check_same_thread=False + a lock: the parse UDF and the subscribe
         # eviction callback may run on different threads.
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        # Multi-worker indexing (indexer.workers > 1) means several PROCESSES
+        # share this file. WAL lets readers proceed alongside the writer, and
+        # a generous busy timeout rides out write bursts — without these,
+        # large corpora die with "database is locked".
+        self._conn = sqlite3.connect(
+            self.db_path, check_same_thread=False, timeout=60.0
+        )
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=60000")
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS parse_cache ("
             "  key TEXT PRIMARY KEY,"

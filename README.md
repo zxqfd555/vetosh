@@ -107,15 +107,22 @@ see [benchmarks/realtime-data-indexing](benchmarks/realtime-data-indexing):
 
 | corpus | ≈ pages | docs | chunks | indexing time | peak RSS | in Qdrant | retrieval accuracy |
 |---|---|---|---|---|---|---|---|
-| 100 MB | 52 000 | 12 969 | 66 136 | 8.3 min | 18.0 GB* | 629 MB | 5/5 |
+| 100 MB | 52 000 | 12 969 | 66 136 | 8.3 min | 18.0 GB* | 0.6 GB | 5/5 |
+| 1 GB | 524 000 | 240 516 | 836 595 | 88 min | 23.6 GB* | 2.7 GB | 16/20 |
+| 3 GB | 1 573 000 | 841 890 | 2 703 850 | 4.5 h | 35.6 GB* | 7.6 GB | 17/20 |
 
-\* 8 Pathway worker processes × ~1.5–2 GB each: a local sentence-transformers
-stack (PyTorch runtime + MiniLM weights + inference buffers) per worker — a
-**constant per worker, independent of corpus size**. Fewer workers or a
-smaller embedder batch size shrink it roughly linearly.
+\* **A 30× larger corpus costs 30× the time (throughput is flat at
+~11–12 MB/min) but only ~2× the peak memory.** The floor is 8 Pathway worker
+processes × ~1.5–2 GB of local sentence-transformers stack each (PyTorch
+runtime + model + inference buffers) — set by the worker count, not by data
+volume. The residual growth comes from per-file watch metadata and from the
+in-flight batch buffer during the *initial bulk backfill* (the whole
+pre-existing corpus lands in a few huge commits); in steady-state watching,
+where documents arrive over time, that buffer stays small. Document contents
+never accumulate in the pipeline (`only_metadata`).
 
 <p align="center">
-  <img src="docs/assets/bench-memory.png" alt="vetosh indexer memory over time while indexing: RSS stays in a flat band while the chunk counter climbs to 66k" width="100%">
+  <img src="docs/assets/bench-memory.png" alt="vetosh indexer memory over time while indexing 3GB / 842k documents: RSS stays within a 26-35GB band for the whole 4.5h run while the chunk counter climbs to 2.7M" width="100%">
 </p>
 
 Setup: 96-core CPU host, streaming mode, 8 worker processes

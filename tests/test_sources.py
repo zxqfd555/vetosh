@@ -161,3 +161,18 @@ def test_make_fetcher_dispatch():
         )
     )
     assert isinstance(sp, SharePointFetcher)
+
+
+def test_monitoring_http_port_config():
+    """indexer.monitoring_http_port: validated, defaults to disabled."""
+    import pytest
+    from pydantic import ValidationError
+
+    from vetosh.config.schema import IndexerConfig
+
+    assert IndexerConfig().monitoring_http_port is None
+    assert IndexerConfig(monitoring_http_port=20500).monitoring_http_port == 20500
+    with pytest.raises(ValidationError):
+        IndexerConfig(monitoring_http_port=0)
+    with pytest.raises(ValidationError):
+        IndexerConfig(monitoring_http_port=70000)

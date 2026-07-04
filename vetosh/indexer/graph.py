@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import os
 import json
 import logging
 from typing import Any
@@ -586,4 +587,11 @@ def run_indexer(
                 "does not support pw.run(udf_cache_directory=...); the UDF "
                 "cache stays in memory."
             )
+    if config.indexer.monitoring_http_port:
+        # The engine's own observability server (Rust, per worker process):
+        # GET /status and GET /metrics (Prometheus) on 127.0.0.1:(base + id).
+        os.environ["PATHWAY_MONITORING_HTTP_PORT"] = str(
+            config.indexer.monitoring_http_port
+        )
+        run_kwargs["with_http_server"] = True
     pw.run(persistence_config=persistence_config(config), **run_kwargs)

@@ -26,13 +26,20 @@ x-vetosh: &vetosh
     LD_PRELOAD: /opt/compat/finite_shim.so
     # Hard guarantee that nothing can spend OpenAI quota.
     OPENAI_API_KEY: x
+    # Allocator experiment knobs (empty = library defaults).
+    _RJEM_MALLOC_CONF: ${BENCH_JEMALLOC_CONF:-}
+    MALLOC_ARENA_MAX: ${BENCH_MALLOC_ARENA_MAX:-}
   volumes:
     - /home/sergey/vetosh:/home/sergey/vetosh:ro
+    # Local-disk copy of the venv overlaid on the same path: keeps NFS out of
+    # the containers' hot path (torch import reads GBs; NFS hiccups froze
+    # runs in D-state). Refresh with rsync after pip installs.
+    - /mnt/scratch/sergey/vetosh-venv312:/home/sergey/vetosh/.venv312:ro
     - /mnt/scratch/sergey/iot-pathway-develop-wt/public/pathway/python:/opt/pathway-src/python:ro
     - /mnt/scratch/sergey/pixi/IoT-Pathway-18069838481262607842/envs/default/lib:/opt/pixi-lib:ro
     - ./compat:/opt/compat:ro
-    - ${HOME}/.cache/huggingface:/hf-cache:ro
-    - ./datasets/${BENCH_SIZE:-100mb}/docs:/data/docs:ro
+    - /mnt/scratch/sergey/hf-cache:/hf-cache:ro
+    - ${BENCH_DATA_ROOT:-./datasets}/${BENCH_SIZE:-100mb}/docs:/data/docs:ro
     - ./config.yaml:/bench/config.yaml:ro
 
 services:

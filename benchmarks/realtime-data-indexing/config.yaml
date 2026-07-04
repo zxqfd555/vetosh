@@ -38,6 +38,9 @@ splitter:
 
 indexer:
   workers: 8              # Pathway worker PROCESSES (via `pathway spawn`)
+  # Spill the non-deterministic UDF memo (parsed texts) to disk: in the
+  # container /tmp is overlayfs (real disk), not tmpfs.
+  udf_cache_directory: /tmp/udf-cache
 
 # Product default: persistence on. Lives inside the container (fresh each
 # run, since run_bench recreates containers), so runs stay cold-start honest

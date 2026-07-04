@@ -142,10 +142,18 @@ Memory is measured as PSS (proportional set size) summed over the container:
 shared pages — e.g. the PyTorch libraries mapped by every worker — are
 counted once, not once per process. Setup: 96-core CPU host, streaming mode,
 8 worker processes, local `static-retrieval-mrl-en-v1` embeddings (no API
-calls; Matryoshka-truncated to 256 dims), 512-token chunks, Qdrant. Retrieval
-accuracy = distinctive articles sampled from the corpus must come back for
-their own queries via `/api/v1/retrieve`; misses are logged in the run
-summary and trace to near-duplicate articles, not lost documents.
+calls; Matryoshka-truncated to 256 dims), 512-token chunks, Qdrant.
+
+A note on the accuracy column. The benchmark is tuned for indexing
+throughput, so it uses just about the fastest embedding model that exists: a
+static one — a token-lookup table with no attention, truncated to 256
+dimensions. That model is both the throughput bottleneck (embedding dominates
+the indexing time above) and the accuracy ceiling: every logged miss is the
+right article losing to a near-duplicate neighbour ("Anarchism" vs "Issues in
+anarchism"), not a lost document — the pipeline indexed 100% of the corpus in
+every run. Swap one config line for a stronger embedder and the accuracy
+ceiling lifts with it, at proportional embedding cost; the engine numbers —
+memory and everything outside embedding time — stay as measured.
 
 ## Requirements
 

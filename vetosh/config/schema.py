@@ -361,6 +361,11 @@ class IndexerConfig(BaseModel):
     # under <persistence dir>/runtime_calls, LRU-evicted). Size it at least to
     # the extracted-text volume of the corpus to avoid re-parse churn.
     parse_cache_size_gb: int = Field(default=8, ge=1)
+    # Advanced. If set, the engine keeps the memoization cache of
+    # non-deterministic UDFs (parsed texts) in SQLite files in this directory
+    # instead of RAM (requires a Pathway build with pw.run's
+    # udf_cache_directory). Point it at a real disk, not tmpfs.
+    udf_cache_directory: str | None = None
 
 
 class PersistenceConfig(BaseModel):

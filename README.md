@@ -95,41 +95,46 @@ laptops and demos (see [docs](docs/README.md) for its concurrency note).
 
 ## Benchmarks
 
-The claim that matters: **the indexer's memory footprint does not depend on
-the corpus size.** Sources are read in `only_metadata` mode — documents flow
-through the pipeline instead of accumulating in it — so memory is a constant
-set by the worker count and the local embedding model, while corpus size only
-affects wall-clock time.
-
 Self-contained benchmark (docker-compose: Qdrant + indexer + server, fully
 local embeddings, zero API cost) over a Wikipedia corpus —
 see [benchmarks/realtime-data-indexing](benchmarks/realtime-data-indexing):
 
-| corpus | ≈ pages | docs | chunks | indexing time | peak RSS* | in Qdrant | retrieval accuracy |
+| corpus | ≈ pages | files | chunks | indexing time | peak memory (PSS) | in Qdrant | retrieval accuracy |
 |---|---|---|---|---|---|---|---|
-| 100 MB | 52 000 | 12 969 | 66 136 | 3.3 min | 11.1 GB | 0.6 GB | 5/5 |
-| 1 GB | 524 000 | 240 516 | 836 595 | 13.7 min | 13.0 GB | 2.2 GB | 19/20 |
-| 3 GB | 1 573 000 | 841 890 | 2 703 850 | 42 min | 15.9 GB | 6.0 GB | 17/20 |
+| 100 MB | 52 000 | 12 969 | 66 136 | 36 s | 7.3 GB | 0.6 GB | 5/5 |
+| 1 GB | 524 000 | 240 516 | 836 595 | 5 min | 8.0 GB | 2.2 GB | 19/20 |
+| 3 GB | 1 573 000 | 841 890 | 2 703 850 | 15 min | 8.3 GB | 6.0 GB | 16/20 |
+| 10 GB | 5 243 000 | 3 423 359 | 10 093 514 | 63 min | 9.7 GB | 20.8 GB | 14/20 |
 
-\* **A 30× larger corpus costs ~13× the time but only ~1.4× the peak
-memory — and document *contents* never accumulate in the pipeline**
-(`only_metadata` sources, backpressure-bounded backfill, deterministic
-chunking/embedding stages that the engine does not memoize). The ~11 GB floor
-is 8 Pathway worker processes with a local embedding stack each; the residual
-slope is the engine-side memo of parsed text (needed for deletion semantics)
-plus per-file watch metadata. Persistence is ON (product default): restarts
-resume without re-embedding, at a modest indexing-time cost.
+Documents flow through the pipeline rather than accumulating in it: sources
+are read in metadata-only mode, backfill is backpressure-bounded, parsed-text
+memoization spills to disk. The only memory that scales with the corpus is
+file-watch metadata — measured at 285 bytes per watched file (right-hand
+plot: five runs against the formula), the price of detecting live edits and
+deletions. Everything else is flat: a 100× larger corpus costs 1.3× the
+memory, and packing the same bytes into fewer files removes even that.
 
 <p align="center">
-  <img src="docs/assets/bench-memory.png" alt="vetosh indexer over a 3GB / 842k-document corpus: the chunk counter climbs linearly to 2.7M while indexer RSS stays in a flat 10-16GB band" width="100%">
+  <img src="docs/assets/bench-memory.png" alt="Left: indexer PSS over time for 100MB..10GB corpora, all curves plateau at 7-10GB. Right: connector-worker extra memory across five runs matches 285 bytes/file + 398 MB" width="100%">
 </p>
 
-Setup: 96-core CPU host, streaming mode, 8 worker processes
-(`indexer.workers: 8`), local `static-retrieval-mrl-en-v1` embeddings
-(no API calls; Matryoshka-truncated to 256 dims), 512-token chunks, Qdrant as
-the vector store. Retrieval accuracy = distinctive
-articles sampled from the corpus must come back for their own queries via
-`/api/v1/retrieve`.
+The peak itself is dominated by the embedding stack, not the engine — a
+Pathway worker process is ~200 MB; the rest is the price of running
+embeddings locally (8 × PyTorch runtime + model), i.e. of paying no
+per-token API fees. Fewer workers or an API embedder shrink it accordingly.
+
+<p align="center">
+  <img src="docs/assets/bench-memory-breakdown.png" alt="Breakdown of the 9.7 GB peak on the 10 GB corpus: 72% is the local PyTorch embedding stack across 8 workers; file-watch metadata is 1 GB; the engine itself is about 200 MB per process" width="85%">
+</p>
+
+Memory is measured as PSS (proportional set size) summed over the container:
+shared pages — e.g. the PyTorch libraries mapped by every worker — are
+counted once, not once per process. Setup: 96-core CPU host, streaming mode,
+8 worker processes, local `static-retrieval-mrl-en-v1` embeddings (no API
+calls; Matryoshka-truncated to 256 dims), 512-token chunks, Qdrant. Retrieval
+accuracy = distinctive articles sampled from the corpus must come back for
+their own queries via `/api/v1/retrieve`; misses are logged in the run
+summary and trace to near-duplicate articles, not lost documents.
 
 ## Requirements
 

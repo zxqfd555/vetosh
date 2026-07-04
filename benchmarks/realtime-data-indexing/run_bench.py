@@ -70,15 +70,19 @@ def _proc_status(container: str) -> dict[str, int] | None:
     """
 
     proc = subprocess.run(
-        ["docker", "exec", container, "sh", "-c", "cat /proc/[0-9]*/status"],
+        ["docker", "exec", container, "sh", "-c",
+         "cat /proc/[0-9]*/status /proc/[0-9]*/smaps_rollup 2>/dev/null"],
         capture_output=True,
         text=True,
     )
     if proc.returncode != 0:
         return None
-    values = {"VmRSS": 0, "VmHWM": 0}
+    # Pss divides shared pages (e.g. the torch libraries mapped by every
+    # worker) proportionally, so its sum is the honest physical footprint;
+    # the VmRSS sum counts each shared page once per process.
+    values = {"VmRSS": 0, "VmHWM": 0, "Pss": 0}
     for line in proc.stdout.splitlines():
-        if line.startswith(("VmRSS:", "VmHWM:")):
+        if line.startswith(("VmRSS:", "VmHWM:", "Pss:")):
             key, rest = line.split(":", 1)
             values[key] += int(rest.strip().split()[0])
     return values
@@ -153,7 +157,10 @@ def main() -> None:
     parser.add_argument("--keep-up", action="store_true", help="don't docker compose down")
     args = parser.parse_args()
 
-    dataset = ROOT / "datasets" / args.size
+    import os as _os
+
+    data_root = Path(_os.environ.get("BENCH_DATA_ROOT", ROOT / "datasets"))
+    dataset = data_root / args.size
     docs_count = len(list((dataset / "docs").glob("*.txt")))
     questions = json.loads((dataset / "questions.json").read_text())
     results_dir = ROOT / "results"
@@ -216,9 +223,9 @@ def main() -> None:
     # Indexing time = the moment of the last observed increase.
     # The CSV is appended live, so an interrupted run keeps its memory curve.
     csv_path = results_dir / f"{args.size}-memory.csv"
-    csv_path.write_text("elapsed_s,rss_mb,hwm_mb,chunks\n")
+    csv_path.write_text("elapsed_s,rss_mb,hwm_mb,pss_mb,chunks\n")
 
-    samples: list[tuple[float, int, int, int]] = []  # (s, rss_kb, hwm_kb, chunks)
+    samples: list[tuple[float, int, int, int, int]] = []  # (s, rss, hwm, pss, chunks)
     last_count = 0
     last_change = started
     last_busy = started
@@ -242,12 +249,18 @@ def main() -> None:
                     last_busy = now
             prev_cpu, prev_time, cpu_seconds = cpu, now, cpu
         elapsed = now - started
-        sample = (elapsed, status.get("VmRSS", 0), status.get("VmHWM", 0), last_count)
+        sample = (
+            elapsed,
+            status.get("VmRSS", 0),
+            status.get("VmHWM", 0),
+            status.get("Pss", 0),
+            last_count,
+        )
         samples.append(sample)
         with csv_path.open("a") as fh:
             fh.write(
-                f"{sample[0]:.1f},{sample[1] / 1024:.1f},"
-                f"{sample[2] / 1024:.1f},{sample[3]}\n"
+                f"{sample[0]:.1f},{sample[1] / 1024:.1f},{sample[2] / 1024:.1f},"
+                f"{sample[3] / 1024:.1f},{sample[4]}\n"
             )
         print(
             f"\r   t={elapsed:7.0f}s  rss={status.get('VmRSS', 0) / 1024:7.1f} MB  "
@@ -283,6 +296,7 @@ def main() -> None:
     # Peak = highest sampled TOTAL RSS across the container's processes (the
     # summed VmHWM in the CSV is only an upper bound for multi-process runs).
     peak_mb = max(s[1] for s in samples) / 1024 if samples else 0.0
+    peak_pss_mb = max(s[3] for s in samples) / 1024 if samples else 0.0
     size_mb = sum(
         f.stat().st_size for f in (dataset / "docs").glob("*.txt")
     ) / 1024 / 1024
@@ -294,6 +308,8 @@ def main() -> None:
         "indexing_seconds": round(duration, 1),
         "throughput_mb_per_min": round(size_mb / (duration / 60), 2),
         "peak_rss_mb": round(peak_mb, 1),
+        # Honest physical peak: shared pages divided among processes.
+        "peak_pss_mb": round(peak_pss_mb, 1),
         "indexer_cpu_seconds": round(cpu_seconds, 1) if cpu_seconds else None,
         "avg_parallelism": round(cpu_seconds / duration, 1) if cpu_seconds else None,
         "vector_db_disk_mb": round(db_bytes / 1024 / 1024, 1) if db_bytes else None,
@@ -322,7 +338,7 @@ def main() -> None:
     ax.set_ylabel("memory, MB")
     ax.set_ylim(bottom=0)
     ax2 = ax.twinx()
-    ax2.plot(minutes, [s[3] for s in samples], color="tab:green", alpha=0.6, linewidth=1.4, label="chunks in DB")
+    ax2.plot(minutes, [s[4] for s in samples], color="tab:green", alpha=0.6, linewidth=1.4, label="chunks in DB")
     ax2.set_ylabel("chunks indexed")
     ax2.set_ylim(bottom=0)
     ax.set_title(f"vetosh indexer — {args.size} corpus ({docs_count} docs, streaming)")

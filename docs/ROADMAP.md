@@ -132,9 +132,10 @@ nothing embarrasses us.*
     ⚠️ Showcase check pending: xpack `rerankers` are graph UDFs; verify they
     are callable standalone in the thin server. If not, this is bespoke
     code — decide explicitly before building.
-11. **`pyfilesystem` source** — reuses `pw.io.pyfilesystem` (only_metadata):
-    one new `sources:` type = live watch over SFTP/FTP/WebDAV/ZIP. ✅ pure
-    Pathway showcase.
+11. ~~**`pyfilesystem` source**~~ — DONE (2026-07-04): `sources:` type
+    `pyfilesystem` (any PyFilesystem URL: FTP/SFTP/WebDAV/ZIP/osfs), wizard
+    option, fetcher, e2e test. Reuses `pw.io.pyfilesystem` only_metadata —
+    pure Pathway showcase.
 12. **`/metrics`** — reuses the engine's monitoring HTTP server
     (`pw.run(with_http_server=True)`), Prometheus format for free. ✅ pure
     Pathway showcase.

@@ -366,6 +366,11 @@ class IndexerConfig(BaseModel):
     # instead of RAM (requires a Pathway build with pw.run's
     # udf_cache_directory). Point it at a real disk, not tmpfs.
     udf_cache_directory: str | None = None
+    # Advanced. Base port of the Pathway engine's built-in monitoring HTTP
+    # server: every worker process serves GET /status (JSON snapshot) and
+    # GET /metrics (Prometheus) on 127.0.0.1:(port + worker index).
+    # None disables the server.
+    monitoring_http_port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class PersistenceConfig(BaseModel):

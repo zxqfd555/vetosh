@@ -343,6 +343,11 @@ The same persistence directory also hosts the **parse cache**
 across restarts, so unchanged documents are neither re-downloaded nor
 re-parsed. Disabling persistence also disables the parse cache.
 
+Engine monitoring (advanced, `indexer.monitoring_http_port`): when set, every
+worker process serves the Pathway engine's built-in observability endpoints on
+`127.0.0.1:(port + worker index)` — `GET /metrics` (Prometheus: input/output
+latency gauges, per-operator row counters) and `GET /status`.
+
 Disabling persistence still produces identical vectors for a given set of files;
 it only forgoes the cross-restart diffing and caching.
 

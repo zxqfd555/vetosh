@@ -136,3 +136,78 @@ def test_persistence_on_and_off_give_same_vectors(tmp_path):
     with_persist = index(True)
     without_persist = index(False)
     assert with_persist == without_persist and with_persist
+
+
+def test_monitoring_endpoints_serve_prometheus(tmp_path, tcp_port):
+    """indexer.monitoring_http_port exposes the engine's /metrics and /status.
+
+    A streaming indexer is started with the monitoring server enabled; the
+    test asserts both endpoints answer on the configured port and that
+    /metrics is well-formed Prometheus text with the engine's latency gauge
+    and per-operator row counters carrying numeric values.
+    """
+    import time
+
+    import httpx
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "a.txt").write_text("cats purr in the yard")
+    config = {
+        "sources": [{"type": "fs", "path": str(docs), "glob": "**/*"}],
+        "vector_db": {
+            "type": "duckdb",
+            "path": str(tmp_path / "e.duckdb"),
+            "table": "embeddings",
+        },
+        "embedder": {"type": "mock"},
+        "indexer": {"monitoring_http_port": tcp_port},
+        "persistence": {"enabled": False},
+    }
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.safe_dump(config))
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "vetosh.cli", "indexer", "--config", str(cfg_path)],
+        cwd=tmp_path,
+        env=dict(os.environ, PYTHONPATH=f"{REPO_ROOT}{os.pathsep}" + os.environ.get("PYTHONPATH", "")),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    base = f"http://127.0.0.1:{tcp_port}"  # single worker -> base port + 0
+    try:
+        deadline = time.monotonic() + 120
+        metrics = None
+        while time.monotonic() < deadline:
+            try:
+                resp = httpx.get(f"{base}/metrics", timeout=5)
+                if resp.status_code == 200:
+                    metrics = resp.text
+                    break
+            except httpx.TransportError:
+                pass
+            time.sleep(1)
+        assert metrics, "monitoring server never came up"
+
+        # Prometheus exposition format with the engine's own instruments.
+        assert "# TYPE input_latency_ms gauge" in metrics
+        assert "# TYPE output_latency_ms gauge" in metrics
+        latency_lines = [
+            ln for ln in metrics.splitlines() if ln.startswith("input_latency_ms ")
+        ]
+        assert latency_lines, "no input_latency_ms sample"
+        assert float(latency_lines[0].split()[1]) >= -1  # -1 == finished
+
+        rows_lines = [
+            ln
+            for ln in metrics.splitlines()
+            if "_rows_positive " in ln and not ln.startswith("#")
+        ]
+        assert rows_lines, "no per-operator row counters"
+        assert all(float(ln.split()[1]) >= 0 for ln in rows_lines)
+
+        assert httpx.get(f"{base}/status", timeout=5).status_code == 200
+    finally:
+        proc.terminate()
+        proc.wait(timeout=30)

@@ -1,16 +1,18 @@
 # vetosh
 
-**A universal, no-code RAG server for any vector database — powered by the
-[Pathway](https://pathway.com) Live Data Framework.**
+**A universal, no-code, always up-to-date RAG server for any vector database
+— powered by the [Pathway](https://pathway.com) Live Data Framework.**
 
-Set up real-time Retrieval-Augmented Generation over your own documents without
-writing any code. Point vetosh at a folder, pick a vector database and an
-embedder in a YAML file, and run a few commands.
+Set up Retrieval-Augmented Generation over your own documents without writing
+any code. Point vetosh at a folder, pick a vector database and an embedder in
+a YAML file, and run a few commands. From then on, any change you make to the
+documents — an edit, a new file, a deletion — is reflected in answers within
+seconds.
 
 <p align="center">
   <img src="docs/assets/demo.gif" alt="vetosh: CLI walkthrough then the web chat UI" width="100%">
 </p>
-<p align="center"><em>From zero to a live RAG stack — <code>quickstart → indexer → server → frontend</code> — then chat with your documents.</em></p>
+<p align="center"><em>From zero to a live RAG stack in two commands — then edit a document and watch the answer change.</em></p>
 
 ```bash
 pip install "vetosh[openai]"
@@ -37,24 +39,27 @@ curl -X POST http://localhost:8989/api/v1/retrieve \
   `vetosh quickstart`).
 - **Any vector DB — 8 backends.** DuckDB (embedded, zero setup — the default),
   pgvector, Qdrant, Milvus, ChromaDB, Weaviate, Pinecone and MongoDB Atlas
-  Vector Search. Every backend is written through Pathway's **native
-  `pw.io.*` connectors** in snapshot mode, so file edits and deletions become
-  real upserts/deletes in the store.
-- **Zero-setup default.** `type: duckdb` needs no external service and does
-  vector search *inside the database* (`list_cosine_similarity` over native
-  `DOUBLE[]` columns) — no linear scans in Python anywhere.
-- **Live & incremental.** Built on Pathway: additions, edits and deletions are
-  reflected in the vector DB in real time. Sources are read in `only_metadata`
-  mode, so a large corpus stays tiny in the pipeline.
+  Vector Search. Every backend is written through **Pathway's native
+  connectors**, so file edits and deletions become real upserts/deletes in
+  the store.
+- **Zero-setup default.** DuckDB is the default backend: an embedded
+  database in a single local file, no external service to install or run,
+  with built-in vector search.
+- **Live & incremental.** Built on Pathway: additions, edits and deletions
+  are reflected in the vector DB in real time — whatever you change is
+  answerable seconds later. Documents flow through the pipeline instead of
+  accumulating in it, so a large corpus stays small in memory.
 - **Multiple sources.** Local filesystem, Google Drive, S3/MinIO and
-  SharePoint (all `only_metadata`), mixed freely in one config.
-- **Reuses `pathway.xpacks.llm`.** Parsers, splitters and embedders are used
+  SharePoint — all watched live, mixed freely in one config.
+- **Reuses Pathway's LLM xpack.** Parsers, splitters and embedders are used
   as-is — vetosh implements none of its own. Five embedder families (OpenAI,
   LiteLLM, SentenceTransformers, Gemini, Bedrock) work identically on the
   indexer and the server side — including a fully local, credential-free
-  stack with `sentence_transformer` + DuckDB.
+  stack with local embeddings + DuckDB.
 - **Decoupled & scalable.** Indexer and API server are independent processes
-  sharing only the vector DB; the server is stateless and scales horizontally.
+  sharing only the vector DB. The server is stateless and scales
+  horizontally; the indexer shards across worker processes with one config
+  line. Every part scales on its own.
 - **Web chat UI, same port.** `vetosh server` serves a clean
   ChatGPT/Claude-style chat page on `/` next to the versioned API
   (`/api/v1/...`) — same origin, no CORS, nothing extra to run. For split
@@ -66,7 +71,7 @@ curl -X POST http://localhost:8989/api/v1/retrieve \
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="vetosh architecture: sources feed the Pathway indexer, which writes through native pw.io connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
+  <img src="docs/assets/architecture.svg" alt="vetosh architecture: sources feed the Pathway indexer, which writes through Pathway's native connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
 </p>
 
 **The two halves are fully decoupled.** The indexer (write path) and the
@@ -75,16 +80,19 @@ talk to each other. Their only contract is the vector database itself:
 
 - **Independent scaling.** The server is stateless and read-only — run any
   number of instances behind a load balancer; each also serves the chat UI at
-  zero cost. The indexer scales separately with Pathway's multi-worker
-  support. Bulk re-indexing never slows down query serving, and query spikes
-  never stall indexing.
+  zero cost. The indexer scales separately: Pathway shards it across worker
+  processes (`indexer.workers: 8` is how the benchmarks below run), so every
+  part of the stack scales independently. Bulk re-indexing never slows down
+  query serving, and query spikes never stall indexing.
 - **Failure isolation.** If the indexer is down, serving continues over the
   last-synced data; if the server is down, indexing keeps the database fresh.
   Either side can be restarted or upgraded independently (the indexer resumes
   from its persistence without re-embedding).
 - **The database stays yours.** Vectors live in *your* store in a plain,
   documented schema — other consumers (BI, other apps, a different retrieval
-  stack) can read the same collection; vetosh doesn't hold it hostage.
+  stack) can read the same collection; vetosh doesn't hold it hostage. And
+  since the default store is an embedded DuckDB file, trying this out costs
+  nothing to set up.
 - **Optional third tier.** For split deployments (UI on a different host than
   the API) a standalone `vetosh frontend` serves the same chat page and
   proxies to the API server-side.
@@ -96,7 +104,9 @@ laptops and demos (see [docs](docs/README.md) for its concurrency note).
 ## Benchmarks
 
 Self-contained benchmark (docker-compose: Qdrant + indexer + server, fully
-local embeddings, zero API cost) over a Wikipedia corpus —
+local embeddings, zero API cost) over a Wikipedia corpus of plain text —
+every byte below is extracted text (a PDF collection with the same text
+content would weigh several times more) —
 see [benchmarks/realtime-data-indexing](benchmarks/realtime-data-indexing):
 
 | corpus | ≈ pages | files | chunks | indexing time | peak memory (PSS) | in Qdrant | retrieval accuracy |
@@ -113,7 +123,7 @@ what stays in memory is short and worth spelling out.
 
 **Grows with the corpus — one thing.** The file-watch index: to detect live
 edits and deletions, the indexer keeps a record (path, mtime, size, owner)
-per watched file. Measured cost: **285 bytes per file**, verified from 13
+per watched file. Measured cost: **~285 bytes per file** (paths of typical length), verified from 13
 thousand to 17 million files (right-hand plot: seven runs against the
 formula; the 50 GB point lands within 1%). It scales with the *number of
 files*, not bytes: the same 3 GB packed into 85k larger files needs 24 MB
@@ -159,6 +169,36 @@ anarchism"), not a lost document — the pipeline indexed 100% of the corpus in
 every run. Swap one config line for a stronger embedder and the accuracy
 ceiling lifts with it, at proportional embedding cost; the engine numbers —
 memory and everything outside embedding time — stay as measured.
+
+## Observability
+
+Three layers, all on by default or one config line away:
+
+**In the chat UI.** The header shows *"indexed N s ago"* — the age of the
+most recent write into the vector store. When you edit a source document,
+you can watch the counter reset as the change lands.
+
+**`GET /api/v1/stats`** on the API server: the backend in use, the number of
+indexed chunks, and index freshness — a JSON one-liner for dashboards and
+health checks, served without touching the indexer (it reads the vector
+store, like every other query).
+
+**Engine metrics (Prometheus).** The Pathway engine ships its own
+observability server; vetosh exposes it with one config line:
+
+```yaml
+indexer:
+  monitoring_http_port: 20000
+```
+
+Every worker process then serves `GET /metrics` on
+`127.0.0.1:(20000 + worker index)` — input/output latency gauges (i.e. the
+indexing lag behind the sources) and per-operator row counters, straight
+from the engine's dataflow. Point a Prometheus scrape at the worker ports
+and you get per-stage throughput and freshness graphs with no extra code.
+
+Logs from both processes go to stdout/stderr in plain text; `vetosh up`
+interleaves them with per-process prefixes.
 
 ## Requirements
 

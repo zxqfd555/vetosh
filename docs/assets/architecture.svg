@@ -47,16 +47,16 @@
     <text x="546" y="131">embed</text>
   </g>
   <g font-size="11.5" fill="#57606a">
-    <text x="290" y="166">• only_metadata: paths in the graph, never bytes</text>
+    <text x="290" y="166">• metadata-only watch: paths in the pipeline, never bytes</text>
     <text x="290" y="188">• persistence: unchanged docs never re-embedded</text>
-    <text x="290" y="210">• parsers / splitters / embedders from xpacks.llm</text>
+    <text x="290" y="210">• parsers / splitters / embedders from the Pathway LLM xpack</text>
     <text x="290" y="232">• edits &amp; deletions flow as native retractions</text>
   </g>
   <text x="425" y="264" text-anchor="middle" font-size="11" fill="#57606a">separate process — write path only</text>
 
   <!-- indexer -> db -->
   <line x1="580" y1="175" x2="678" y2="175" stroke="#6b7280" stroke-width="1.6" marker-end="url(#arrow)"/>
-  <text x="629" y="152" text-anchor="middle" font-size="10.5" fill="#57606a">native pw.io.*</text>
+  <text x="629" y="152" text-anchor="middle" font-size="10.5" fill="#57606a">native connectors</text>
   <text x="629" y="165" text-anchor="middle" font-size="10.5" fill="#57606a">connectors</text>
   <text x="629" y="196" text-anchor="middle" font-size="10.5" fill="#57606a">snapshot mode:</text>
   <text x="629" y="209" text-anchor="middle" font-size="10.5" fill="#57606a">real upserts/deletes</text>

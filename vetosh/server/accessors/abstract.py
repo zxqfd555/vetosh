@@ -6,6 +6,15 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 
+class IndexNotReadyError(RuntimeError):
+    """The vector store exists in config but has no data yet.
+
+    Raised while the indexer is still starting or has not committed its
+    first batch (e.g. the DuckDB file or the target table/collection does
+    not exist yet). The server maps it to HTTP 503 with a friendly message
+    instead of a stack trace."""
+
+
 class AsyncVectorAccessor(ABC):
     """Retrieve the nearest chunks for a query embedding from a vector store.
 

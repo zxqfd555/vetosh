@@ -87,3 +87,40 @@ def test_up_serves_after_static_indexing(tmp_path, tcp_port):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def test_index_ready_probe_duckdb(tmp_path):
+    """_index_ready: False before the indexer created anything, True after."""
+    import duckdb
+
+    from vetosh.config.schema import VetoshConfig
+    from vetosh.up import _index_ready
+
+    config = VetoshConfig.model_validate(
+        {
+            "sources": [{"type": "fs", "path": str(tmp_path)}],
+            "vector_db": {
+                "type": "duckdb",
+                "path": str(tmp_path / "e.duckdb"),
+                "table": "embeddings",
+            },
+            "embedder": {"type": "mock"},
+        }
+    )
+    assert not _index_ready(config)  # file does not exist yet
+
+    conn = duckdb.connect(str(tmp_path / "e.duckdb"))
+    assert not _index_ready(config)  # file exists, table does not
+
+    conn.execute(
+        "CREATE TABLE embeddings (chunk_id VARCHAR, text VARCHAR, "
+        "metadata VARCHAR, embedding DOUBLE[])"
+    )
+    assert not _index_ready(config)  # prepared but still empty: no chunks yet
+
+    conn.execute(
+        "INSERT INTO embeddings VALUES ('c1', 'hello', "
+        "'{\"path\": \"/a.txt\"}', [0.1, 0.2])"
+    )
+    conn.close()
+    assert _index_ready(config)  # first real content -> server may start

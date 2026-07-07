@@ -696,4 +696,12 @@ def run_indexer(
             config.indexer.monitoring_http_port
         )
         run_kwargs["with_http_server"] = True
-    pw.run(persistence_config=persistence_config(config), **run_kwargs)
+    # The interactive monitoring dashboard redraws the terminal with escape
+    # codes; under `vetosh up` both children share one console and it would
+    # wipe the server's logs. Metrics live on the HTTP monitoring server
+    # (indexer.monitoring_http_port) instead.
+    pw.run(
+        monitoring_level=pw.MonitoringLevel.NONE,
+        persistence_config=persistence_config(config),
+        **run_kwargs,
+    )

@@ -243,8 +243,44 @@ architecture and scaling notes live in **[docs/README.md](docs/README.md)**.
 
 ## Development
 
+vetosh currently runs against a **development build of Pathway** (the new
+vector-database connectors and the multimodal parsers are not in a released
+Pathway yet). No compilation is needed: CI builds ready-made wheels for
+every commit. From-scratch setup on a fresh machine:
+
 ```bash
-pip install -e ".[dev,openai]"
+# 0. Prerequisites: Python >= 3.10 (3.12 recommended) and git.
+
+# 1. vetosh in its own virtualenv
+git clone <vetosh-repo-url> vetosh && cd vetosh
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e ".[dev,local]"     # editable vetosh + local embeddings
+
+# 2. A development build of Pathway from the internal dev package index
+#    (prebuilt wheels; note for maintainers: replace with plain
+#    `pip install pathway` once a release ships the new connectors):
+pip install --prefer-binary -U \
+    --extra-index-url https://packages.pathway.com/966431ef6ba pathway
+
+# 3. A (free) Pathway license: https://pathway.com/framework/get-license
+export PATHWAY_LICENSE_KEY=...
+
+# 4. Sanity check: zero-to-chat on the bundled corpus
+vetosh demo                        # -> http://localhost:8989
+```
+
+Notes:
+
+- `vetosh demo` indexes with the **local** embedder (no keys, no API cost);
+  export `OPENAI_API_KEY` before running it if you want real generated
+  answers in `/rag` — the key upgrades only the answer composition, never
+  the index.
+
+Running the test suites:
+
+```bash
 pytest -m "not slow"            # fast unit tests (no Pathway, no services)
 pytest -m "slow and not integration"   # end-to-end indexer tests (spin up Pathway)
 pytest -m integration          # real-database tests (see below)

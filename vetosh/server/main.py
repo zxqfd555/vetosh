@@ -20,6 +20,7 @@ split deployments (UI host separate from the API host).
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -30,8 +31,11 @@ from pydantic import BaseModel, Field
 from vetosh import APP_NAME
 from vetosh.config.schema import VetoshConfig
 from vetosh.server.accessors import AsyncVectorAccessor, build_accessor
+from vetosh.server.accessors.abstract import IndexNotReadyError
 from vetosh.server.embedder import AsyncEmbedder, build_embedder
 from vetosh.server.llm import AsyncLLM, build_llm
+
+logger = logging.getLogger(__name__)
 
 
 class RetrieveRequest(BaseModel):
@@ -80,6 +84,19 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        # Local embedders (sentence-transformers) lazily import torch and
+        # load weights on first use — seconds the first user question must
+        # not pay. Warm them up with an invisible query before serving;
+        # API embedders skip this (a warm-up there costs real tokens).
+        if getattr(embedder, "is_local", False):
+            import time as _time
+
+            started = _time.monotonic()
+            logger.info("warming up the local embedder...")
+            await embedder.embed("vetosh warmup")
+            logger.info(
+                "embedder ready in %.1fs", _time.monotonic() - started
+            )
         try:
             yield
         finally:
@@ -89,6 +106,25 @@ def create_app(
                 await llm.close()
 
     app = FastAPI(title=f"{title} server", lifespan=lifespan)
+
+    @app.exception_handler(IndexNotReadyError)
+    async def _index_not_ready(_request, exc: IndexNotReadyError):
+        # The indexer simply hasn't written its first batch yet — a normal
+        # state during startup, not an error worth a stack trace.
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": (
+                    "The index is not ready yet — the indexer is still "
+                    "starting or hasn't written its first documents. "
+                    "Try again in a moment."
+                ),
+                "reason": str(exc),
+            },
+            headers={"Retry-After": "5"},
+        )
     v1 = APIRouter(prefix="/api/v1")
 
     async def health() -> dict[str, str]:

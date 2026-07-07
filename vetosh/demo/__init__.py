@@ -5,12 +5,11 @@ into a working directory, generates a DuckDB-backed config, and runs the
 ``vetosh up`` supervisor over it. The printed script walks the presenter
 through the money shot: edit ``docs/pricing.md`` and watch the answer change.
 
-Embedder/LLM selection (best available, no questions asked):
-
-1. ``OPENAI_API_KEY`` set → OpenAI embeddings + OpenAI LLM (real answers);
-2. ``sentence-transformers`` installed → local embeddings (real retrieval),
-   mock LLM (the answer quotes the retrieved snippet);
-3. otherwise → mock embedder + mock LLM, with a loud quality warning.
+Embedder/LLM selection (no questions asked). The embedder is always local —
+``sentence-transformers`` when installed, the mock embedder otherwise —
+so retrieval is free and the index never depends on an API key. The LLM
+uses ``OPENAI_API_KEY`` when it is set (real generated answers) and falls
+back to the mock LLM (the answer quotes the retrieved snippet) when not.
 """
 
 from __future__ import annotations
@@ -51,10 +50,12 @@ _SCRIPT = """
 
 
 def choose_embedder() -> str:
-    """Pick the best embedder available in this environment."""
+    """Pick the local embedder: sentence-transformers if installed, else mock.
 
-    if os.environ.get("OPENAI_API_KEY"):
-        return "openai"
+    Deliberately never an API embedder — the demo index must not depend on
+    (or spend) anyone's API key; the key only upgrades the LLM.
+    """
+
     if importlib.util.find_spec("sentence_transformers") is not None:
         return "sentence_transformer"
     return "mock"
@@ -82,14 +83,15 @@ def build_demo_config(
         },
         "server": {"host": "127.0.0.1", "port": port},
     }
-    if embedder == "openai":
-        config["embedder"] = {"type": "openai", "api_key": "${OPENAI_API_KEY}"}
+    config["embedder"] = (
+        {"type": "sentence_transformer"}
+        if embedder == "sentence_transformer"
+        else {"type": "mock"}
+    )
+    # The LLM (not the embedder) upgrades to OpenAI when a key is present.
+    if os.environ.get("OPENAI_API_KEY"):
         config["llm"] = {"type": "openai", "api_key": "${OPENAI_API_KEY}"}
-    elif embedder == "sentence_transformer":
-        config["embedder"] = {"type": "sentence_transformer"}
-        config["llm"] = {"type": "mock"}
     else:
-        config["embedder"] = {"type": "mock"}
         config["llm"] = {"type": "mock"}
     return config
 
@@ -114,6 +116,31 @@ def _resolve_license_key() -> str:
     return key
 
 
+def _reset_index_if_embedder_changed(demo_dir: Path, embedder: str) -> None:
+    """Demo data is disposable: on an embedder switch (e.g. the user exported
+    OPENAI_API_KEY since the last run), silently drop the old index instead
+    of tripping the fingerprint guard — vectors from different embedders are
+    not comparable, and re-indexing the tiny corpus takes seconds."""
+
+    config_path = demo_dir / "config.yaml"
+    if not config_path.exists():
+        return
+    try:
+        previous = yaml.safe_load(config_path.read_text())["embedder"]["type"]
+    except Exception:  # noqa: BLE001 - a hand-edited config must not crash the demo
+        return
+    current = embedder if embedder == "sentence_transformer" else "mock"
+    if previous == current:
+        return
+    logger.info(
+        "demo: embedder changed (%s -> %s); resetting the demo index",
+        previous,
+        current,
+    )
+    (demo_dir / "embeddings.duckdb").unlink(missing_ok=True)
+    shutil.rmtree(demo_dir / "persistence", ignore_errors=True)
+
+
 def prepare_demo_dir(demo_dir: Path, *, port: int, license_key: str) -> Path:
     """Copy the corpus and write config.yaml; returns the config path."""
 
@@ -121,6 +148,7 @@ def prepare_demo_dir(demo_dir: Path, *, port: int, license_key: str) -> Path:
     if not docs.exists():
         shutil.copytree(_CORPUS_DIR, docs)
     embedder = choose_embedder()
+    _reset_index_if_embedder_changed(demo_dir, embedder)
     if embedder == "mock":
         logger.warning(
             "Neither OPENAI_API_KEY nor sentence-transformers found: using the "

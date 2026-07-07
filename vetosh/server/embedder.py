@@ -79,6 +79,9 @@ class OpenAIAsyncEmbedder:
 class SentenceTransformerAsyncEmbedder:
     """Embed queries with a local sentence-transformers model.
 
+    ``is_local = True`` opts into the server's startup warm-up: the first
+    real user question must not pay the torch import + model load.
+
     Fully local — no provider, no credentials. The (CPU/GPU-bound) encode runs
     off the event loop in a worker thread. Mirrors the indexer's
     ``sentence_transformer`` xpack embedder; use the same ``model`` on both
@@ -86,6 +89,7 @@ class SentenceTransformerAsyncEmbedder:
     """
 
     _DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+    is_local = True
 
     def __init__(self, config) -> None:
         self._model_name = config.model or self._DEFAULT_MODEL

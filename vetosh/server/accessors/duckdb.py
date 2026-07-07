@@ -6,13 +6,12 @@ inside DuckDB with ``list_cosine_similarity`` — a vectorized, columnar scan in
 native code (no Python loop over rows). For local corpora this answers in
 milliseconds without any external service.
 
-Concurrency note: DuckDB allows one read-write process *or* several read-only
-processes per database file — never both. A **streaming** indexer holds the
-file read-write for its lifetime, so this accessor cannot query the same file
-concurrently; index with ``mode: static`` sources (index once, exit, then
-serve), or use a client-server backend (qdrant, pgvector, ...) for concurrent
-live indexing and serving. Connections here are short-lived and read-only, so
-serving never blocks a subsequent indexer run.
+Concurrency note: the indexer writes with ``detach_between_batches``,
+releasing the single-writer file lock between minibatches; connections here
+are short-lived and read-only and retry through those brief lock windows.
+Before the indexer's first commit the file (or table) does not exist yet —
+that is surfaced as :class:`IndexNotReadyError`, which the server turns into
+a friendly HTTP 503 rather than a stack trace.
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ import json
 import logging
 from typing import Any
 
-from vetosh.server.accessors.abstract import AsyncVectorAccessor
+from vetosh.server.accessors.abstract import AsyncVectorAccessor, IndexNotReadyError
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +57,13 @@ class DuckDbAccessor(AsyncVectorAccessor):
             try:
                 return duckdb.connect(self._path, read_only=True)
             except duckdb.Error as exc:
-                if "lock" not in str(exc).lower():
+                message = str(exc).lower()
+                if "does not exist" in message:
+                    # The indexer has not created the database file yet.
+                    raise IndexNotReadyError(
+                        f"DuckDB file {self._path!r} does not exist yet"
+                    ) from exc
+                if "lock" not in message:
                     raise
                 last_exc = exc
                 time.sleep(self._LOCK_RETRY_DELAY)
@@ -66,6 +71,8 @@ class DuckDbAccessor(AsyncVectorAccessor):
         raise RuntimeError(_LOCK_HINT % (self._path,)) from last_exc
 
     def _query(self, embedding: list[float], k: int) -> list[dict[str, Any]]:
+        import duckdb
+
         conn = self._connect_with_retry()
         try:
             rows = conn.execute(
@@ -76,6 +83,11 @@ class DuckDbAccessor(AsyncVectorAccessor):
                 f"ORDER BY score DESC NULLS LAST LIMIT ?",
                 [list(map(float, embedding)), k],
             ).fetchall()
+        except duckdb.CatalogException as exc:
+            # The file exists but the table has not been created yet.
+            raise IndexNotReadyError(
+                f"table {self._table!r} does not exist yet in {self._path!r}"
+            ) from exc
         finally:
             conn.close()
         results: list[dict[str, Any]] = []

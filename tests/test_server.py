@@ -116,3 +116,37 @@ def test_frontend_can_be_disabled(store_path, mock_server_embedder):
     with TestClient(app) as client:
         assert client.get("/").status_code == 404
         assert client.get("/api/v1/health").status_code == 200
+
+
+def test_index_not_ready_returns_friendly_503(tmp_path, mock_server_embedder):
+    """Standalone server before the indexer ran: 503 + a human message.
+
+    (The orchestrated path never hits this: `vetosh up` holds the server
+    back until the store is queryable.)
+    """
+    missing = tmp_path / "never-created.duckdb"
+    with _client(missing, mock_server_embedder) as client:
+        resp = client.post("/api/v1/retrieve", json={"query": "hello", "k": 2})
+    assert resp.status_code == 503
+    body = resp.json()
+    assert "not ready" in body["detail"]
+    assert resp.headers.get("retry-after") == "5"
+
+
+def test_local_embedder_warmed_up_at_startup(store_path):
+    """A local embedder is exercised once by the lifespan, before any request."""
+
+    class CountingLocalEmbedder:
+        is_local = True
+        calls = 0
+
+        async def embed(self, text):
+            type(self).calls += 1
+            return fake_embedding(text)
+
+        async def close(self):
+            return None
+
+    embedder = CountingLocalEmbedder()
+    with _client(store_path, embedder):
+        assert CountingLocalEmbedder.calls == 1  # warm-up ran on startup

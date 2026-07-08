@@ -81,7 +81,7 @@ free" demo. Polish the first-run experience; make the live-sync magic visible.*
    (port 8989, persistence, splitter).
 4. ~~**Re-record the README GIF**~~ — DONE (2026-07-04): quickstart →
    `vetosh up` → live edit → chat; regenerate with
-   `python demos/generate_demos.py`.
+   `python docs/generate_demos.py`.
 5. ~~**Index statistics endpoint + frontend liveness**~~ — DONE:
    `/api/v1/stats` + "indexed N s ago" in the chat header.
 6. **Friendly failure modes + `vetosh doctor`** — REMAINS: validate config,

@@ -117,23 +117,23 @@ see [benchmarks/realtime-data-indexing](benchmarks/realtime-data-indexing):
 
 | corpus | ≈ pages | files | chunks | indexing time | peak memory (PSS) | in Qdrant | retrieval accuracy |
 |---|---|---|---|---|---|---|---|
-| 100 MB | 52 000 | 12 969 | 66 136 | 36 s | 7.3 GB | 0.6 GB | 5/5 |
-| 1 GB | 524 000 | 240 516 | 836 595 | 5 min | 8.0 GB | 2.2 GB | 19/20 |
-| 3 GB | 1 573 000 | 841 890 | 2 703 850 | 15 min | 8.3 GB | 6.0 GB | 16/20 |
-| 10 GB | 5 243 000 | 3 423 359 | 10 093 514 | 63 min | 9.7 GB | 20.8 GB | 14/20 |
-| 30 GB | 15 729 000 | 9 202 620 | 29 817 294 | 3.1 h | 12.5 GB | 61.3 GB | 12/20 |
-| 50 GB | 26 214 000 | 17 083 603 | 53 913 774 | 5.6 h | 15.9 GB | 107.8 GB | 11/20 |
+| 100 MB | 52 000 | 12 969 | 66 136 | 39 s | 6.6 GB | 0.6 GB | 5/5 |
+| 1 GB | 524 000 | 240 516 | 836 595 | 4.8 min | 6.9 GB | 2.2 GB | 19/20 |
+| 3 GB | 1 573 000 | 841 890 | 2 703 850 | 15 min | 7.3 GB | 6.0 GB | 16/20 |
+| 10 GB | 5 243 000 | 3 423 359 | 10 093 514 | 62 min | 8.8 GB | 20.8 GB | 14/20 |
+| 30 GB | 15 729 000 | 9 202 620 | 29 817 294 | 2.9 h | 12.0 GB | 61.4 GB | 12/20 |
+| 50 GB | 26 214 000 | 17 083 603 | 53 913 774 | 5.8 h | 16.4 GB | 107.8 GB | 12/20 |
 
 Documents flow through the pipeline rather than accumulating in it, so
 what stays in memory is short and worth spelling out.
 
 **Grows with the corpus — one thing.** The file-watch index: to detect live
 edits and deletions, the indexer keeps a record (path, mtime, size, owner)
-per watched file. Measured cost: **~285 bytes per file** (paths of typical length), verified from 13
-thousand to 17 million files (right-hand plot: seven runs against the
-formula; the 50 GB point lands within 1%). It scales with the *number of
-files*, not bytes: the same 3 GB packed into 85k larger files needs 24 MB
-instead of 240 MB.
+per watched file. Measured cost: **~318 bytes per file** (paths of typical
+length; ±20% with the hash-table's load factor), verified from 13 thousand
+to 17 million files (right-hand plot: six corpus sizes against one fitted
+line). It scales with the *number of files*, not bytes: the same corpus
+packed into fewer, larger files costs proportionally less.
 
 **Constant, regardless of corpus size.** The embedding stack (PyTorch
 runtime + model, per worker), the engine baseline (~200 MB per process),
@@ -142,12 +142,12 @@ the first minutes of a run and stay there — identical on 3 GB and 10 GB.
 
 **On disk, not in memory.** Parsed-text cache, persistence snapshots, and
 the embeddings themselves (in the vector database). That is why the curves
-plateau: a **500× larger corpus costs 2.2× the memory** — and the growth
+plateau: a **500× larger corpus costs 2.5× the memory** — and the growth
 that remains is the file-watch index above, i.e. the corpus in fewer files
 would cost less. Indexing time scales linearly with bytes throughout.
 
 <p align="center">
-  <img src="docs/assets/bench-memory.png" alt="Left: indexer PSS over time for 100MB..10GB corpora, all curves plateau at 7-10GB. Right: connector-worker extra memory across seven runs matches 285 bytes/file + 398 MB" width="100%">
+  <img src="docs/assets/bench-memory.png" alt="Left: indexer PSS over time for corpora from 100 MB to 50 GB; every curve plateaus between 7 and 16 GB. Right: connector-worker extra memory across six corpus sizes follows ~318 bytes per watched file" width="100%">
 </p>
 
 The peak itself is dominated by the embedding stack, not the engine — a
@@ -156,14 +156,18 @@ embeddings locally (8 × PyTorch runtime + model), i.e. of paying no
 per-token API fees. Fewer workers or an API embedder shrink it accordingly.
 
 <p align="center">
-  <img src="docs/assets/bench-memory-breakdown.png" alt="Breakdown of the 9.7 GB peak on the 10 GB corpus: 72% is the local PyTorch embedding stack across 8 workers; file-watch metadata is 1 GB; the engine itself is about 200 MB per process" width="85%">
+  <img src="docs/assets/bench-memory-breakdown.png" alt="Breakdown of the 8.8 GB peak on the 10 GB corpus: three quarters is the local PyTorch embedding stack across 8 workers; file-watch metadata is about 1.1 GB; supervisors and shared code make up the rest" width="85%">
 </p>
 
 Memory is measured as PSS (proportional set size) summed over the container:
 shared pages — e.g. the PyTorch libraries mapped by every worker — are
 counted once, not once per process. Setup: 96-core CPU host, streaming mode,
 8 worker processes, local `static-retrieval-mrl-en-v1` embeddings (no API
-calls; Matryoshka-truncated to 256 dims), 512-token chunks, Qdrant.
+calls; Matryoshka-truncated to 256 dims), 512-token chunks, Qdrant, and
+jemalloc's `background_thread` purging enabled in the indexer containers
+(measured free; it keeps idle workers from retaining freed pages). Numbers
+are from the prebuilt development wheel — the same one the Development
+section installs, so they are reproducible as-is.
 
 A note on the accuracy column. The benchmark is tuned for indexing
 throughput, so it uses just about the fastest embedding model that exists: a
@@ -255,19 +259,15 @@ every commit. From-scratch setup on a fresh machine:
 git clone <vetosh-repo-url> vetosh && cd vetosh
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -U pip
-pip install -e ".[dev,local]"     # editable vetosh + local embeddings
+pip install -U uv
+# uv, because pip's resolver currently times out ("resolution too deep")
+# against the dev package index; uv resolves the same set in seconds.
+uv pip install -e ".[dev,local]" --extra-index-url https://packages.pathway.com/966431ef6ba
 
-# 2. A development build of Pathway from the internal dev package index
-#    (prebuilt wheels; note for maintainers: replace with plain
-#    `pip install pathway` once a release ships the new connectors):
-pip install --prefer-binary -U \
-    --extra-index-url https://packages.pathway.com/966431ef6ba pathway
-
-# 3. A (free) Pathway license: https://pathway.com/framework/get-license
+# 2. A (free) Pathway license: https://pathway.com/framework/get-license
 export PATHWAY_LICENSE_KEY=...
 
-# 4. Sanity check: zero-to-chat on the bundled corpus
+# 3. Sanity check: zero-to-chat on the bundled corpus
 vetosh demo                        # -> http://localhost:8989
 ```
 

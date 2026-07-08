@@ -212,8 +212,9 @@ class ParserRegistry:
         if inspect.isawaitable(result):
             result = asyncio.run(result)
         # result is list[(text, metadata)]; concatenate element texts — our own
-        # splitter re-chunks downstream.
-        return "\n\n".join(text for text, _meta in result if text)
+        # splitter re-chunks downstream. str() because some parsers return
+        # str-like objects (e.g. PaddleOCR's MarkdownResult), not plain str.
+        return "\n\n".join(str(text) for text, _meta in result if text)
 
 
 # ---------------------------------------------------------------------------

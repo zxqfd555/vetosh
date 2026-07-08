@@ -14,7 +14,9 @@ x-vetosh: &vetosh
   image: python:3.12-slim
   working_dir: /home/sergey/vetosh
   environment: &vetosh-env
-    PYTHONPATH: "/opt/pathway-src/python:/home/sergey/vetosh:/home/sergey/vetosh/.venv312/lib/python3.12/site-packages:/home/sergey/vetosh/.venv312/lib64/python3.12/site-packages"
+    # Default: the dev worktree + local venv; override with BENCH_PYTHONPATH
+    # to run against an installed wheel (e.g. the nightly venv).
+    PYTHONPATH: "${BENCH_PYTHONPATH:-/opt/pathway-src/python:/home/sergey/vetosh:/home/sergey/vetosh/.venv312/lib/python3.12/site-packages:/home/sergey/vetosh/.venv312/lib64/python3.12/site-packages}"
     PATHWAY_LICENSE_KEY: ${PATHWAY_LICENSE_KEY:-}
     HF_HOME: /hf-cache
     # Model cache is pre-warmed by run_bench on the host; containers never
@@ -22,8 +24,8 @@ x-vetosh: &vetosh
     HF_HUB_OFFLINE: "1"
     # The dev-built engine links libs from the pixi toolchain (libpq, libssl…)
     # and -ffast-math symbols glibc dropped (see compat/finite_shim.c).
-    LD_LIBRARY_PATH: /opt/pixi-lib
-    LD_PRELOAD: /opt/compat/finite_shim.so
+    LD_LIBRARY_PATH: "${BENCH_LD_LIBRARY_PATH-/opt/pixi-lib}"
+    LD_PRELOAD: "${BENCH_LD_PRELOAD-/opt/compat/finite_shim.so}"
     # Hard guarantee that nothing can spend OpenAI quota.
     OPENAI_API_KEY: x
     # Allocator experiment knobs (empty = library defaults).
@@ -31,6 +33,7 @@ x-vetosh: &vetosh
     MALLOC_ARENA_MAX: ${BENCH_MALLOC_ARENA_MAX:-}
   volumes:
     - /home/sergey/vetosh:/home/sergey/vetosh:ro
+    - /mnt/scratch/sergey/vetosh-nightly-venv:/opt/nightly-venv:ro
     # Local-disk copy of the venv overlaid on the same path: keeps NFS out of
     # the containers' hot path (torch import reads GBs; NFS hiccups froze
     # runs in D-state). Refresh with rsync after pip installs.

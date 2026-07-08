@@ -223,3 +223,7 @@ __marimo__/
 benchmarks/*/datasets/
 benchmarks/*/results/
 benchmarks/*/compat/*.so
+
+# Runtime working directory of `vetosh demo` (regenerable: corpus copy,
+# generated config, DuckDB store, persistence)
+vetosh-demo/

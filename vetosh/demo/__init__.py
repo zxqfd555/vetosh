@@ -34,14 +34,15 @@ _SCRIPT = """
  vetosh demo — Lumina Coffee Systems
  Chat UI:  http://localhost:{port}
 
- Try asking:
-   • How much does the Team tier cost?
-   • What happens if a machine goes offline?
+ Your documents live in:
+   {docs_dir}
+ Anything you do there — edit a file, drop in new documents (PDF, DOCX,
+ scans, …), delete one — is reflected in the answers within seconds.
 
- The live-sync moment:
-   1. Open {docs_dir}/pricing.md
-   2. Change the Team tier price (129 EUR → e.g. 199 EUR) and save
-   3. Ask about the Team tier again — the answer follows the file
+ A scripted moment to try first:
+   1. Ask in the chat: How much does the Team tier cost?   (→ 129 EUR)
+   2. Open {docs_dir}/pricing.md and change 129 EUR → 199 EUR
+   3. Ask again — the answer follows the file
       (watch the “indexed … ago” counter in the header)
 
  Ctrl-C stops everything.

@@ -78,7 +78,33 @@ def _warn_duckdb_streaming(config: VetoshConfig) -> None:
 _WAIT_HEARTBEAT = 5.0
 
 
-def _index_ready(config: VetoshConfig) -> bool:
+def _sources_look_empty(config: VetoshConfig) -> bool:
+    """True when every source is a local folder with no matching files.
+
+    Only decidable for ``fs`` sources; any remote source counts as
+    potentially non-empty. Used to let `vetosh up` serve an empty index
+    immediately (a legitimate state — drop files in later and watch them
+    appear) instead of waiting forever for chunks that will never come.
+    """
+
+    import fnmatch
+    from pathlib import Path
+
+    for src in config.sources:
+        if src.type != "fs":
+            return False
+        base = Path(src.path)
+        if not base.exists():
+            continue
+        for candidate in base.rglob("*"):
+            if candidate.is_file() and fnmatch.fnmatch(
+                str(candidate.relative_to(base)), src.glob.removeprefix("**/")
+            ):
+                return False
+    return True
+
+
+def _index_ready(config: VetoshConfig, *, allow_empty: bool = False) -> bool:
     """True once the vector store answers a trivial query.
 
     Uses the same accessor as the server, so "ready" here is exactly
@@ -94,6 +120,11 @@ def _index_ready(config: VetoshConfig) -> bool:
         accessor = build_accessor(config.vector_db)
         try:
             stats = await accessor.stats()
+            if allow_empty:
+                # Sources are empty folders: a queryable-but-empty store is
+                # the correct steady state; serve it and index files live as
+                # they appear.
+                return True
             # prepare_backend creates empty tables/collections at indexer
             # startup — "queryable" is not "has data". The indexer runs
             # forever in streaming mode, so the only start signal is actual
@@ -120,7 +151,13 @@ def _wait_for_index(config: VetoshConfig, indexer: subprocess.Popen) -> int | No
 
     started = time.monotonic()
     last_beat = 0.0
-    while not _index_ready(config):
+    allow_empty = _sources_look_empty(config)
+    if allow_empty:
+        logger.info(
+            "up: the source folders are empty — starting with an empty "
+            "index; documents dropped in later are indexed live"
+        )
+    while not _index_ready(config, allow_empty=allow_empty):
         code = indexer.poll()
         if code is not None and code != 0:
             return code

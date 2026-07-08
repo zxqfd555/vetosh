@@ -154,6 +154,41 @@ def _accuracy(
     return hits, len(questions), misses
 
 
+_FREE_EMBEDDERS = {"sentence_transformer", "sentencetransformer", "mock"}
+
+
+def _assert_zero_cost(config_path: Path) -> None:
+    """Refuse to run a benchmark that could spend anyone's API money.
+
+    The guarantee is enforced, not assumed: only local embedders are allowed,
+    no LLM section may be present (the bench never composes answers), and the
+    OPENAI_API_KEY passed to containers must be the literal dummy "x" from
+    docker-compose. Editing any of these fails loudly here, before a single
+    container starts.
+    """
+
+    import yaml
+
+    config = yaml.safe_load(config_path.read_text())
+    embedder = (config.get("embedder") or {}).get("type", "")
+    if embedder not in _FREE_EMBEDDERS:
+        raise SystemExit(
+            f"zero-cost guard: benchmark config uses embedder {embedder!r}; "
+            f"only local embedders {sorted(_FREE_EMBEDDERS)} are allowed"
+        )
+    if config.get("llm"):
+        raise SystemExit(
+            "zero-cost guard: benchmark config must not define an 'llm' "
+            "section (the bench only measures indexing and /retrieve)"
+        )
+    compose = (config_path.parent / "docker-compose.yml").read_text()
+    if "OPENAI_API_KEY: x" not in compose:
+        raise SystemExit(
+            "zero-cost guard: docker-compose must hard-pin OPENAI_API_KEY "
+            "to the dummy value 'x' so no real key can leak into containers"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--size", default="100mb", help="datasets/<size> to index")
@@ -165,6 +200,7 @@ def main() -> None:
 
     import os as _os
 
+    _assert_zero_cost(ROOT / "config.yaml")
     data_root = Path(_os.environ.get("BENCH_DATA_ROOT", ROOT / "datasets"))
     dataset = data_root / args.size
     docs_count = sum(1 for _ in (dataset / "docs").rglob("*.txt"))

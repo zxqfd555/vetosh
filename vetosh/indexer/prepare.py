@@ -24,6 +24,8 @@ probe embedding call).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import asyncio
 import logging
 
@@ -50,9 +52,11 @@ def prepare_backend(config: VetoshConfig) -> None:
     """Create the vector-DB target for ``config`` if it does not exist."""
 
     vdb = config.vector_db
-    if vdb.type in {"duckdb", "qdrant"}:
-        return  # the connector creates the target itself
-    if vdb.type == "pgvector":
+    if vdb.type == "qdrant":
+        return  # the connector creates the collection itself
+    if vdb.type == "duckdb":
+        _prepare_duckdb(config)
+    elif vdb.type == "pgvector":
         _prepare_pgvector(config)
     elif vdb.type == "milvus":
         _prepare_milvus(config)
@@ -211,7 +215,27 @@ def _prepare_mongodb(config: VetoshConfig) -> None:
         if vdb.collection not in db.list_collection_names():
             db.create_collection(vdb.collection)
         coll = db[vdb.collection]
-        if list(coll.list_search_indexes(vdb.vector_index)):
+        # Atlas Local boots mongot (the Search Index Management service)
+        # noticeably later than mongod itself; both listing and creating
+        # search indexes go through it. Ride out the boot window instead of
+        # failing the first indexer start.
+        import time
+
+        from pymongo.errors import OperationFailure
+
+        deadline = time.monotonic() + 120
+        while True:
+            try:
+                existing = list(coll.list_search_indexes(vdb.vector_index))
+                break
+            except OperationFailure as exc:
+                if (
+                    "Search Index Management" not in str(exc)
+                    or time.monotonic() > deadline
+                ):
+                    raise
+                time.sleep(3)
+        if existing:
             return
         dimension = resolve_embedding_dimension(config)
         try:
@@ -246,3 +270,30 @@ def _prepare_mongodb(config: VetoshConfig) -> None:
             )
     finally:
         client.close()
+
+
+def _prepare_duckdb(config: VetoshConfig) -> None:
+    """Create the database file and an empty table immediately.
+
+    The pw.io.duckdb writer would create both on its first flush, but that
+    only happens once there is data: with an empty source folder the file
+    would never appear and `vetosh up` could not tell "still indexing" from
+    "nothing to index". An empty, correctly-shaped table makes the store
+    queryable from second one. The DDL mirrors the writer exactly — same
+    columns, and PRIMARY KEY(chunk_id) that snapshot-mode upserts require —
+    so the writer's CREATE IF NOT EXISTS + preflight accept it as-is.
+    """
+
+    import duckdb
+
+    vdb = config.vector_db
+    Path(vdb.path).parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(vdb.path)
+    try:
+        conn.execute(
+            f'CREATE TABLE IF NOT EXISTS "{vdb.table}" ('
+            f'"chunk_id" VARCHAR PRIMARY KEY, "text" VARCHAR, '
+            f'"metadata" VARCHAR, "embedding" DOUBLE[])'
+        )
+    finally:
+        conn.close()

@@ -124,3 +124,133 @@ def test_index_ready_probe_duckdb(tmp_path):
     )
     conn.close()
     assert _index_ready(config)  # first real content -> server may start
+
+
+def test_sources_look_empty(tmp_path):
+    from vetosh.config.schema import VetoshConfig
+    from vetosh.up import _sources_look_empty
+
+    def cfg(path):
+        return VetoshConfig.model_validate(
+            {
+                "sources": [{"type": "fs", "path": str(path)}],
+                "vector_db": {"type": "duckdb", "path": str(tmp_path / "e.duckdb")},
+                "embedder": {"type": "mock"},
+            }
+        )
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    assert _sources_look_empty(cfg(docs))  # empty folder
+    (docs / "sub").mkdir()
+    assert _sources_look_empty(cfg(docs))  # directories don't count
+    (docs / "sub" / "a.txt").write_text("hi")
+    assert not _sources_look_empty(cfg(docs))  # a real file
+
+    remote = VetoshConfig.model_validate(
+        {
+            "sources": [
+                {"type": "fs", "path": str(docs)},
+                {"type": "s3", "bucket": "b"},
+            ],
+            "vector_db": {"type": "duckdb", "path": str(tmp_path / "e.duckdb")},
+            "embedder": {"type": "mock"},
+        }
+    )
+    assert not _sources_look_empty(remote)  # remote sources: assume non-empty
+
+
+def test_prepare_duckdb_creates_empty_queryable_store(tmp_path):
+    from vetosh.config.schema import VetoshConfig
+    from vetosh.indexer.prepare import prepare_backend
+    from vetosh.up import _index_ready
+
+    config = VetoshConfig.model_validate(
+        {
+            "sources": [{"type": "fs", "path": str(tmp_path)}],
+            "vector_db": {
+                "type": "duckdb",
+                "path": str(tmp_path / "store" / "e.duckdb"),
+                "table": "embeddings",
+            },
+            "embedder": {"type": "mock"},
+        }
+    )
+    prepare_backend(config)
+    # Queryable immediately (allow_empty), and idempotent.
+    prepare_backend(config)
+    assert _index_ready(config, allow_empty=True)
+    assert not _index_ready(config)  # still no chunks
+
+
+def test_up_empty_folder_starts_and_indexes_live(tmp_path, tcp_port):
+    """An empty source folder must not block `vetosh up`: the server starts
+    over the pre-created empty DuckDB store, /retrieve answers (empty), and a
+    file dropped in afterwards is indexed live — proving the writer accepts
+    the pre-created table (schema parity) end-to-end."""
+    import signal as _signal
+    import subprocess
+    import sys
+    import time
+
+    import httpx
+    import yaml
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    config = {
+        "sources": [{"type": "fs", "path": str(docs), "glob": "**/*"}],
+        "vector_db": {
+            "type": "duckdb",
+            "path": str(tmp_path / "e.duckdb"),
+            "table": "embeddings",
+        },
+        "embedder": {"type": "mock"},
+        "server": {"host": "127.0.0.1", "port": tcp_port},
+        "persistence": {"enabled": False},
+    }
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump(config))
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "vetosh.cli", "up", "--config", str(cfg)],
+        cwd=tmp_path,
+        env=dict(
+            os.environ,
+            PYTHONPATH=f"{REPO_ROOT}{os.pathsep}" + os.environ.get("PYTHONPATH", ""),
+        ),
+    )
+    base = f"http://127.0.0.1:{tcp_port}"
+    try:
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            try:
+                if httpx.get(f"{base}/api/v1/health", timeout=5).status_code == 200:
+                    break
+            except httpx.TransportError:
+                pass
+            assert proc.poll() is None, "up exited prematurely"
+            time.sleep(1)
+        else:
+            raise TimeoutError("server did not start over the empty index")
+
+        resp = httpx.post(f"{base}/api/v1/retrieve", json={"query": "x", "k": 3}, timeout=30)
+        assert resp.status_code == 200 and resp.json()["results"] == []
+
+        (docs / "late.txt").write_text("dogs bark at the postman every morning")
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            resp = httpx.post(
+                f"{base}/api/v1/retrieve", json={"query": "dogs bark", "k": 3}, timeout=30
+            )
+            if resp.status_code == 200 and resp.json()["results"]:
+                break
+            time.sleep(2)
+        else:
+            raise TimeoutError("late-added file was not indexed")
+
+        proc.send_signal(_signal.SIGINT)
+        assert proc.wait(timeout=30) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()

@@ -447,3 +447,17 @@ database**:
   DuckDB backend is the exception: it lives in one file next to the indexer and
   is meant for local / single-node setups.)
 ```
+
+
+## Regenerating the README GIF
+
+The demo GIF is **emulated** (rendered with Pillow — no terminal recorder or
+browser needed), so it regenerates deterministically anywhere:
+
+```bash
+pip install pillow
+python docs/generate_demos.py     # -> docs/assets/demo.gif
+```
+
+The scene (the Team-tier question, the `sed` price edit, the second answer)
+is parameterized by constants at the top of the script.

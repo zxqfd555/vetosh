@@ -4,7 +4,7 @@
 These are *emulated* demos rendered with Pillow — no terminal recorder or
 browser needed — so they regenerate deterministically anywhere:
 
-    python demos/generate_demos.py
+    python docs/generate_demos.py
 
 Output:
     docs/assets/demo.gif   the four `vetosh` commands + output, then the chat UI
@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-ASSETS = Path(__file__).resolve().parent.parent / "docs" / "assets"
+ASSETS = Path(__file__).resolve().parent / "assets"
 
 _FONT_CANDIDATES = {
     "mono": [
@@ -81,7 +81,7 @@ T_ACCENT = (129, 140, 248)
 T_PAD = 24
 T_LINE_H = 30
 
-SCRIPT = [
+SCRIPT_UP = [
     ("cmd", "vetosh quickstart"),
     ("out", "  ? Where are your documents?   › ./docs", T_OUT),
     ("out", "  ? Vector database             › DuckDB (embedded, zero setup)", T_OUT),
@@ -92,8 +92,11 @@ SCRIPT = [
     ("out", "  [indexer] watching ./docs  (fs · streaming)", T_OUT),
     ("out", "  [indexer] parsed 128 docs · embedded 1,544 chunks → duckdb", T_ACCENT),
     ("out", "  [server]  chat UI + API on http://localhost:8989", T_ACCENT),
+]
+
+SCRIPT_EDIT = [
     ("gap", ""),
-    ("out", "  # edit a document — the index follows in seconds:", T_OUT),
+    ("out", "  # change the price — the index follows in seconds:", T_OUT),
     ("cmd", "sed -i 's/129 EUR/199 EUR/' docs/pricing.md"),
     ("out", "  [indexer] docs/pricing.md changed · re-embedded 3 chunks", T_ACCENT),
 ]
@@ -127,12 +130,12 @@ def _draw_terminal(lines, typing) -> Image.Image:
     return img
 
 
-def build_terminal() -> tuple[list[Image.Image], list[int]]:
+def build_terminal(script, preprinted=()) -> tuple[list[Image.Image], list[int], list[tuple]]:
     frames: list[Image.Image] = []
     durs: list[int] = []
-    printed: list[tuple] = []
+    printed: list[tuple] = list(preprinted)
 
-    for item in SCRIPT:
+    for item in script:
         kind = item[0]
         if kind == "cmd":
             text = item[1]
@@ -156,7 +159,7 @@ def build_terminal() -> tuple[list[Image.Image], list[int]]:
 
     frames.append(_draw_terminal(printed, None))
     durs.append(1500)  # hold before switching to the UI scene
-    return frames, durs
+    return frames, durs, printed
 
 
 # ---------------------------------------------------------------------------
@@ -173,11 +176,14 @@ F_USER_BG = (31, 32, 35)
 F_ASSIST_BG = (244, 244, 246)
 F_SOFTBG = (247, 247, 248)
 
-QUESTION = "How does vetosh keep the vector DB in sync?"
-ANSWER = (
-    "vetosh runs on Pathway's live data framework. When a file changes, the "
-    "indexer re-embeds only the diff and updates the vector DB in real time — "
-    "additions, edits and deletions all propagate automatically."
+QUESTION = "How much does the Team tier cost?"
+ANSWER_BEFORE = (
+    "The Team tier costs 129 EUR per seat per month, billed annually. "
+    "It includes fleet monitoring for up to 50 machines."
+)
+ANSWER_AFTER = (
+    "The Team tier costs 199 EUR per seat per month, billed annually. "
+    "It includes fleet monitoring for up to 50 machines."
 )
 
 
@@ -195,7 +201,11 @@ def _wrap(draw, text, fnt, max_w):
     return lines
 
 
-def _draw_frontend(composer_text, show_user, typing, answer_chars, show_sources) -> Image.Image:
+def _draw_frontend(exchanges, composer_text, typing, indexed_note) -> Image.Image:
+    """Render the chat with a list of (question, shown_answer_chars|None,
+    show_sources) exchanges; ``typing`` draws the assistant dots after the
+    last question instead of an answer."""
+
     img = Image.new("RGB", (F_W, F_H), F_BG)
     d = ImageDraw.Draw(img)
     sans = font("sans", 16)
@@ -206,58 +216,66 @@ def _draw_frontend(composer_text, show_user, typing, answer_chars, show_sources)
     d.line([0, 53, F_W, 53], fill=F_BORDER)
     d.rounded_rectangle([20, 16, 46, 42], radius=8, fill=F_ACCENT)
     d.text((56, 29), "vetosh", font=sans_b, fill=F_TEXT, anchor="lm")
-    d.text((F_W - 20, 29), "API · http://localhost:8989 · indexed 2 s ago", font=small, fill=F_SOFT, anchor="rm")
+    d.text((F_W - 20, 29), f"API · http://localhost:8989 · {indexed_note}",
+           font=small, fill=F_SOFT, anchor="rm")
 
-    y = 86
-    if not show_user:
+    y = 78
+    if not exchanges and not composer_text:
         d.text((F_W // 2, 210), "Ask anything about your documents",
                font=font("sans_bold", 22), fill=F_TEXT, anchor="mm")
         d.text((F_W // 2, 242), "Answers are grounded in your indexed knowledge base.",
                font=sans, fill=F_SOFT, anchor="mm")
-    else:
+
+    for i, (question, answer_chars, show_sources) in enumerate(exchanges):
         # user bubble (right)
-        lines = _wrap(d, QUESTION, sans, 360)
+        lines = _wrap(d, question, sans, 360)
         bw = max(d.textlength(ln, font=sans) for ln in lines) + 32
         bh = len(lines) * 24 + 20
         bx2 = F_W - 24
         d.rounded_rectangle([bx2 - bw, y, bx2, y + bh], radius=18, fill=F_USER_BG)
-        for i, ln in enumerate(lines):
-            d.text((bx2 - bw + 16, y + 12 + i * 24), ln, font=sans, fill=(255, 255, 255))
-        d.ellipse([F_W - 24 + 8, y, F_W - 24 + 8, y], fill=F_USER_BG)
-        y += bh + 18
+        for j, ln in enumerate(lines):
+            d.text((bx2 - bw + 16, y + 12 + j * 24), ln, font=sans, fill=(255, 255, 255))
+        y += bh + 14
 
-        # assistant area
+        # assistant side
         ax = 24
         d.ellipse([ax, y, ax + 30, y + 30], fill=F_ACCENT)
-        d.text((ax + 15, y + 15), "AI", font=font("sans_bold", 11), fill=(255, 255, 255), anchor="mm")
+        d.text((ax + 15, y + 15), "AI", font=font("sans_bold", 11),
+               fill=(255, 255, 255), anchor="mm")
         bx = ax + 42
-        if typing:
+        is_last = i == len(exchanges) - 1
+        if is_last and typing:
             d.rounded_rectangle([bx, y, bx + 70, y + 34], radius=16, fill=F_ASSIST_BG)
-            for i, on in enumerate(typing):
+            for k, on in enumerate(typing):
                 col = F_SOFT if on else (200, 203, 209)
-                d.ellipse([bx + 16 + i * 16, y + 14, bx + 23 + i * 16, y + 21], fill=col)
-        else:
-            shown = ANSWER[:answer_chars]
+                d.ellipse([bx + 16 + k * 16, y + 14, bx + 23 + k * 16, y + 21], fill=col)
+            y += 44
+        elif answer_chars is not None:
+            full = ANSWER_AFTER if i == 1 else ANSWER_BEFORE
+            shown = full[:answer_chars]
             lines = _wrap(d, shown, sans, 470)
             bh = len(lines) * 24 + 20
             bw = (max((d.textlength(ln, font=sans) for ln in lines), default=0)) + 32
             d.rounded_rectangle([bx, y, bx + max(bw, 90), y + bh], radius=18, fill=F_ASSIST_BG)
-            for i, ln in enumerate(lines):
-                d.text((bx + 16, y + 12 + i * 24), ln, font=sans, fill=F_TEXT)
-            y += bh + 10
+            for j, ln in enumerate(lines):
+                d.text((bx + 16, y + 12 + j * 24), ln, font=sans, fill=F_TEXT)
+            y += bh + 8
             if show_sources:
-                d.rounded_rectangle([bx, y, bx + 150, y + 30], radius=10,
+                d.rounded_rectangle([bx, y, bx + 190, y + 28], radius=10,
                                     fill=F_SOFTBG, outline=F_BORDER)
-                d.text((bx + 12, y + 15), "▸  2 sources", font=small, fill=F_SOFT, anchor="lm")
+                d.text((bx + 12, y + 14), "▸  docs/pricing.md", font=small,
+                       fill=F_SOFT, anchor="lm")
+                y += 38
+        y += 10
 
     # composer
     cy = F_H - 74
-    d.rounded_rectangle([24, cy, F_W - 24, cy + 50], radius=22, outline=F_BORDER, width=1, fill=F_BG)
+    d.rounded_rectangle([24, cy, F_W - 24, cy + 50], radius=22,
+                        outline=F_BORDER, width=1, fill=F_BG)
     text = composer_text if composer_text else "Message…"
     color = F_TEXT if composer_text else F_SOFT
     d.text((44, cy + 25), text, font=sans, fill=color, anchor="lm")
     d.ellipse([F_W - 24 - 46, cy + 6, F_W - 24 - 8, cy + 44], fill=F_ACCENT)
-    # send arrow
     cx, cyy = F_W - 24 - 27, cy + 25
     d.line([cx - 6, cyy + 5, cx + 6, cyy - 6], fill=(255, 255, 255), width=2)
     d.line([cx + 6, cyy - 6, cx + 1, cyy - 6], fill=(255, 255, 255), width=2)
@@ -265,35 +283,37 @@ def _draw_frontend(composer_text, show_user, typing, answer_chars, show_sources)
     return img
 
 
-def build_frontend() -> tuple[list[Image.Image], list[int]]:
+def build_chat(prior, answer, indexed_note) -> tuple[list[Image.Image], list[int]]:
+    """One question/answer beat: type the question, dots, reveal ``answer``.
+
+    ``prior`` is a list of completed exchanges rendered above (the history).
+    """
+
     frames: list[Image.Image] = []
     durs: list[int] = []
 
-    def add(frame: Image.Image, dur: int) -> None:
+    def add(frame, dur):
         frames.append(frame)
         durs.append(dur)
 
-    # 1) empty + type the question
-    add(_draw_frontend("", False, None, 0, False), 900)
+    done = [(q, chars, True) for q, chars in prior]
+    add(_draw_frontend(done, "", None, indexed_note), 900)
     cur = ""
     for i, ch in enumerate(QUESTION):
         cur += ch
         if i % 2 == 0 or i == len(QUESTION) - 1:
-            add(_draw_frontend(cur, False, None, 0, False), 40)
-    add(_draw_frontend(QUESTION, False, None, 0, False), 350)
+            add(_draw_frontend(done, cur, None, indexed_note), 40)
+    add(_draw_frontend(done, QUESTION, None, indexed_note), 300)
 
-    # 2) send -> user bubble + typing dots
+    pending = done + [(QUESTION, None, False)]
     for _ in range(2):
         for pat in [(1, 0, 0), (1, 1, 0), (1, 1, 1)]:
-            add(_draw_frontend("", True, pat, 0, False), 220)
+            add(_draw_frontend(pending, "", pat, indexed_note), 200)
 
-    # 3) reveal answer progressively
-    for frac in (0.35, 0.7, 1.0):
-        add(_draw_frontend("", True, None, int(len(ANSWER) * frac), False), 380)
-
-    # 4) show sources + hold
-    add(_draw_frontend("", True, None, len(ANSWER), True), 3000)
-
+    for frac in (0.4, 0.8, 1.0):
+        shown = done + [(QUESTION, int(len(answer) * frac), False)]
+        add(_draw_frontend(shown, "", None, indexed_note), 380)
+    add(_draw_frontend(done + [(QUESTION, len(answer), True)], "", None, indexed_note), 2600)
     return frames, durs
 
 
@@ -311,12 +331,20 @@ def _onto_canvas(img: Image.Image, bg: tuple[int, int, int]) -> Image.Image:
 
 
 def render_combined_gif() -> None:
-    t_frames, t_durs = build_terminal()
-    f_frames, f_durs = build_frontend()
+    # Beat 1: quickstart + up. Beat 2: ask about the Team tier -> 129 EUR.
+    # Beat 3: sed edits pricing.md. Beat 4: same question -> 199 EUR.
+    t1_frames, t1_durs, printed = build_terminal(SCRIPT_UP)
+    c1_frames, c1_durs = build_chat([], ANSWER_BEFORE, "indexed 41 min ago")
+    t2_frames, t2_durs, _ = build_terminal(SCRIPT_EDIT, preprinted=printed)
+    c2_frames, c2_durs = build_chat(
+        [(QUESTION, len(ANSWER_BEFORE))], ANSWER_AFTER, "indexed 2 s ago"
+    )
 
-    frames = [_onto_canvas(f, T_BG) for f in t_frames]
-    frames += [_onto_canvas(f, F_BG) for f in f_frames]
-    durs = t_durs + f_durs
+    frames = [_onto_canvas(f, T_BG) for f in t1_frames]
+    frames += [_onto_canvas(f, F_BG) for f in c1_frames]
+    frames += [_onto_canvas(f, T_BG) for f in t2_frames]
+    frames += [_onto_canvas(f, F_BG) for f in c2_frames]
+    durs = t1_durs + c1_durs + t2_durs + c2_durs
 
     save_gif(ASSETS / "demo.gif", frames, durs, colors=96)
 

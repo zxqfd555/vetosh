@@ -1,12 +1,13 @@
 # vetosh
 
-**A universal, no-code RAG server for any vector database — powered by the
-[Pathway](https://pathway.com) Live Data Framework.**
+**A universal, no-code, always up-to-date RAG server for any vector database
+— powered by the [Pathway](https://pathway.com) Live Data Framework.**
 
-vetosh lets you stand up production Retrieval-Augmented Generation over your own
-documents without writing code. You point it at a folder, choose a vector
-database and an embedder in a YAML file (or generate one with an interactive
-wizard), and run two commands:
+vetosh stands up Retrieval-Augmented Generation over your own documents —
+text, Office files, PDFs, scans, and (with API keys) audio and video —
+without writing code. Point it at a folder, choose a vector database and an
+embedder in a YAML file (or generate one with the wizard), and run one
+command (`vetosh up`) or the two components separately:
 
 - **`vetosh indexer`** — a Pathway streaming pipeline that watches your files,
   parses and chunks them, embeds the chunks and keeps your vector DB in sync
@@ -25,18 +26,22 @@ database, so you can scale them independently.
 
 vetosh requires **Python ≥ 3.10** (the minimum supported by Pathway).
 
-```bash
-pip install vetosh
-
-# include the OpenAI client if you use OpenAI embedders / the /rag endpoint
-pip install "vetosh[openai]"
-```
-
-For development:
+Until a released Pathway ships the vector-store connectors, vetosh installs
+against a prebuilt Pathway development wheel (see the README's
+[Development](../README.md#development) section for the full walkthrough):
 
 ```bash
-pip install -e ".[dev,openai]"
+pip install -U uv
+uv pip install -e ".[dev,local]" --prerelease=allow \
+    --extra-index-url https://packages.pathway.com/966431ef6ba
 ```
+
+Optional extras: `openai` (OpenAI embedders / `/rag`), `local`
+(sentence-transformers), `docling` (layout-aware PDF + Office parsing),
+`ocr` (scanned images), `pyfilesystem` (FTP/SFTP/WebDAV/ZIP sources),
+`gdrive`, `sharepoint`, plus one extra per vector-DB client (`qdrant`,
+`pgvector`, …, or `all`). Once Pathway publishes a release, this section
+collapses to `pip install "vetosh[...]"`.
 
 ---
 
@@ -48,9 +53,12 @@ The fastest way to get a valid config is the interactive wizard:
 vetosh quickstart
 ```
 
-It walks you through every option (each with a sensible default — press Enter to
-accept), then writes a YAML file. You only *have* to provide document paths,
-vector-DB connection details, API keys and your Pathway license key.
+It asks only what it must (the DuckDB + local-embeddings happy path is seven
+questions) and writes a YAML file; everything else — port, persistence,
+chunking, parser routing — gets silent, documented defaults you can edit
+later. You only *have* to provide document paths, vector-DB connection
+details (for client-server backends), API keys for keyed providers, and your
+Pathway license key.
 
 Then run the two components (in separate terminals or on separate machines):
 
@@ -133,7 +141,7 @@ hardcoded.
 |---|---|---|---|---|
 | `pathway_license_key` | str | — | indexer | Free Pathway license key (or `${ENV}`). |
 | `sources` | list | — (required) | indexer | One or more sources to index (mixed types allowed). |
-| `sources[].type` | `fs`\|`gdrive` | `fs` | indexer | Source type — see [Sources](#sources) below. |
+| `sources[].type` | `fs`\|`gdrive`\|`s3`\|`sharepoint`\|`pyfilesystem` | `fs` | indexer | Source type — see [Sources](#sources) below. |
 | `sources[].mode` | `streaming`\|`static` | `streaming` | indexer | `streaming` watches continuously; `static` indexes once and exits. |
 | `sources[].max_backlog_size` | int\|null | `1000` | indexer | **Advanced.** Backpressure bound on in-flight entries per connector (fs/gdrive/s3). Keeps memory flat during bulk backfills; the default suits virtually everyone — not offered by the wizard, edit the YAML to change. `null` disables. |
 | **fs** `sources[].path` | str | — (required) | indexer | Directory to watch. |
@@ -152,11 +160,11 @@ hardcoded.
 | **sharepoint** `sources[].cert_path` / `.thumbprint` | str | — (required) | indexer | Certificate .pem and its thumbprint. |
 | **sharepoint** `sources[].root_path` | str | — (required) | indexer | Directory/file to index. |
 | **sharepoint** `sources[].recursive` | bool | `true` | indexer | Scan nested directories. |
+| **sharepoint** `sources[].refresh_interval` | int | `30` | indexer | Polling period, seconds. |
 | **pyfilesystem** `sources[].fs_url` | str | — (required) | indexer | Any PyFilesystem URL: `ftp://…`, `ssh://…`, `webdav://…`, `zip://…`, `osfs://…` (extra: `vetosh[pyfilesystem]`; some protocols need a driver package). |
 | **pyfilesystem** `sources[].path` | str | `""` | indexer | Path inside the opened filesystem (recursive). |
 | **pyfilesystem** `sources[].refresh_interval` | float | `30.0` | indexer | Seconds between scans (streaming mode). |
 | `parser` | list of rules | keyless-first defaults | indexer | Routing rules `{match: ["*.pdf"], type: docling, options: {...}}`, first match wins; unmatched files use built-in defaults (text→utf8, pdf→docling/pypdf, office→unstructured, images→paddle_ocr, audio→whisper if `OPENAI_API_KEY`, video→twelvelabs_video if `TWELVELABS_API_KEY`, else skip+warn). Types: `utf8`, `pypdf`, `docling`, `unstructured`, `paddle_ocr`, `vision_image`, `vision_slide`, `whisper`, `twelvelabs_video`, `skip`. Changing routing is fingerprint-guarded. |
-| **sharepoint** `sources[].refresh_interval` | int | `30` | indexer | Polling period, seconds. |
 | `vector_db.type` | `duckdb`\|`pgvector`\|`milvus`\|`qdrant`\|`chroma`\|`weaviate`\|`pinecone`\|`mongodb` | — (required) | both | Vector database backend (see [Backends](#vector-database-backends)). |
 | **duckdb** `vector_db.path` | str | — (required) | both | Path to the DuckDB database file. |
 | **duckdb** `vector_db.table` | str | `vetosh_embeddings` | both | Target table. |
@@ -171,12 +179,12 @@ hardcoded.
 | **qdrant** `vector_db.collection` | str | `vetosh_embeddings` | both | Auto-created (cosine) if missing. |
 | **chroma** `vector_db.host` / `.port` | str / int | `localhost` / `8000` | both | Chroma server address. |
 | **chroma** `vector_db.tenant` / `.database` | str | Chroma defaults | both | Multi-tenant selectors. |
-| **chroma** `vector_db.collection` | str | `vetosh_embeddings` | both | Must pre-exist (cosine `hnsw:space`). |
+| **chroma** `vector_db.collection` | str | `vetosh_embeddings` | both | Auto-created (cosine `hnsw:space`). |
 | **weaviate** `vector_db.http_host` / `.http_port` | str / int | `localhost` / `8080` | both | HTTP endpoint. |
 | **weaviate** `vector_db.grpc_host` / `.grpc_port` | str / int | http_host / `50051` | server | gRPC endpoint (v4 client). |
 | **weaviate** `vector_db.api_key` | str | — | both | API key. |
-| **weaviate** `vector_db.collection` | str | `VetoshEmbeddings` | both | Must pre-exist (capitalized name). |
-| **pinecone** `vector_db.index_name` | str | — (required) | both | Must pre-exist with the embedder's dimension. |
+| **weaviate** `vector_db.collection` | str | `VetoshEmbeddings` | both | Auto-created (capitalized name). |
+| **pinecone** `vector_db.index_name` | str | — (required) | both | Auto-created (serverless, embedder's dimension, cosine). |
 | **pinecone** `vector_db.api_key` | str | `${PINECONE_API_KEY}` | both | Pinecone API key. |
 | **pinecone** `vector_db.namespace` | str | `""` | both | Optional namespace. |
 | **mongodb** `vector_db.connection_string` | str | — (required) | both | `mongodb+srv://...` for Atlas. |
@@ -194,12 +202,12 @@ hardcoded.
 | `persistence.path` | str | `./persistence` | indexer | Persistence directory (also hosts the parse cache under `runtime_calls/`). Silent default — the wizard does not ask. |
 | `server.host` / `server.port` | str / int | `127.0.0.1` / `8989` | server | Bind address. Loopback by default; set `0.0.0.0` explicitly to listen on all interfaces (containers, remote access) — see [Security](#security--exposing-the-server). |
 | `server.serve_frontend` | bool | `true` | server | Serve the chat UI on `/` from the same port (API stays under `/api/v1`). |
+| `server.cors_origins` | list[str] | `[]` (disabled) | server | Opt-in CORS allowlist for third-party browser frontends calling the API directly from another origin. vetosh's own UIs never need it. Prefer exact origins over `*`. |
 | `llm.type` | str | `openai` | server | LLM for `/rag` (omit to disable `/rag`). |
 | `llm.model` | str | `gpt-4o-mini` | server | Chat model. |
 | `llm.api_key` | str | — | server | API key (or `${ENV}`). |
 | `frontend.host` / `frontend.port` | str / int | `127.0.0.1` / `3000` | frontend (standalone) | Bind address for the split-deployment chat UI. |
 | `frontend.api_url` | str | `http://localhost:8989` | frontend (standalone) | Base URL of the API the standalone frontend proxies to — point it at the backend host in split deployments (frontend fleet / backend fleet). The address never reaches the browser. |
-| `server.cors_origins` | list[str] | `[]` (disabled) | server | Opt-in CORS allowlist for third-party browser frontends calling the API directly from another origin. vetosh's own UIs never need it. Prefer exact origins over `*`. |
 | `frontend.title` | str | `vetosh` | both | Title shown in the chat UI (embedded and standalone). |
 
 **Supported embedders** (from `pathway.xpacks.llm.embedders`): `openai`,
@@ -231,9 +239,14 @@ tiny (1 GB of PDFs stays a few KB in the pipeline). Today that means:
   `thumbprint`). Requires a Pathway **Scale** license and
   `pip install "vetosh[sharepoint]"`.
 
-You can list several sources of mixed types. **pyfilesystem** gained
-`only_metadata` support in the same Pathway change (#10483) and is next in
-line to be wired into `sources:`.
+- **`pyfilesystem`** — anything the
+  [PyFilesystem2](https://docs.pyfilesystem.org) library opens: FTP, SFTP,
+  WebDAV, even ZIP/TAR archives — selected by `fs_url` (e.g.
+  `ftp://user:pass@host/dir`, `zip://./docs.zip`). Install
+  `pip install "vetosh[pyfilesystem]"`; some protocols need their own driver
+  package (`fs.sshfs`, `fs.webdavfs`).
+
+You can list several sources of mixed types in one config.
 
 ### Vector database backends
 
@@ -242,6 +255,15 @@ connector** in snapshot/upsert mode keyed by the chunk id, so file additions,
 edits and deletions become real inserts/updates/deletes in the store. The
 server retrieves through each database's own vector-search API — there are no
 linear scans in Python anywhere.
+
+**Targets are created for you.** At startup the indexer runs
+`prepare_backend`: it creates the missing table / collection / index for
+every backend (pgvector table + HNSW index, Milvus collection, Chroma and
+Weaviate collections, the Pinecone serverless index, the MongoDB Atlas
+`vectorSearch` index), sizing the vector dimension from
+`vector_db.embedding_dimension` when set, or by introspecting the configured
+embedder otherwise. The schemas below are shown for reference — e.g. when a
+DBA manages the database — not as required manual steps.
 
 #### DuckDB (embedded — the zero-setup default)
 
@@ -266,10 +288,10 @@ serving work on one file. On older Pathway builds without the flag, vetosh
 warns and falls back to the hold-the-lock behavior (use `mode: static`
 there).
 
-#### pgvector table
+#### pgvector
 
-Create the target table with a `vector(n)` column sized to your embedder's
-dimension, e.g. for `text-embedding-3-small` (1536 dims):
+Auto-created (extension, table, HNSW index). Reference schema, e.g. for
+`text-embedding-3-small` (1536 dims):
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -283,11 +305,11 @@ CREATE TABLE vetosh_embeddings (
 
 (The indexer writes the chunk primary key to the `chunk_id` column.)
 
-#### Milvus collection
+#### Milvus
 
-Create the collection ahead of time with a primary key field `id` (VARCHAR), a
-`text` (VARCHAR) field, a `metadata` (JSON) field and an `embedding`
-(FLOAT_VECTOR) field of the right dimension, indexed with the `COSINE` metric.
+Auto-created: a collection with a VARCHAR primary key, `text` (VARCHAR),
+`metadata` (JSON) and an `embedding` (FLOAT_VECTOR) field of the embedder's
+dimension, AUTOINDEX with the `COSINE` metric.
 
 #### Qdrant
 
@@ -298,36 +320,31 @@ Set `api_key` for Qdrant Cloud.
 
 #### ChromaDB
 
-Create the collection first (the connector never creates it), with the cosine
-distance:
-
-```python
-client.create_collection("vetosh_embeddings", metadata={"hnsw:space": "cosine"})
-```
-
-The chunk text is stored as the Chroma document and the source metadata as a
-JSON string (Chroma metadata values must be scalars).
+Auto-created with the cosine distance (`hnsw:space`). The chunk text is
+stored as the Chroma document and the source metadata as a JSON string
+(Chroma metadata values must be scalars).
 
 #### Weaviate
 
-Create the collection first (capitalized name, e.g. `VetoshEmbeddings`). The
-chunk vector is stored as the object vector; `text` / `metadata` (JSON string)
-/ `chunk_id` become properties. The server's v4 client needs both the HTTP and
-gRPC ports.
+Auto-created (capitalized name, e.g. `VetoshEmbeddings`; vectorizer `none`).
+The chunk vector is stored as the object vector; `text` / `metadata` (JSON
+string) / `chunk_id` become properties. The server's v4 client needs both the
+HTTP and gRPC ports.
 
 #### Pinecone
 
-Create the index first with your embedder's dimension (cosine metric). The
-`text` and JSON-string `metadata` are stored as record metadata. The API key
-comes from `api_key` or `$PINECONE_API_KEY`.
+Auto-created: a serverless index (`vector_db.cloud` / `.region`) with the
+embedder's dimension and the cosine metric. The `text` and JSON-string
+`metadata` are stored as record metadata. The API key comes from `api_key`
+or `$PINECONE_API_KEY`.
 
 #### MongoDB Atlas Vector Search
 
-The indexer writes one document per chunk (`pw.io.mongodb`, snapshot mode);
-the database/collection are auto-created. Create an Atlas `vectorSearch` index
-(default name `vector_index`) on the `embedding` path with `numDimensions`
-matching your embedder and the `cosine` similarity; the server retrieves with
-`$vectorSearch`.
+The indexer writes one document per chunk (`pw.io.mongodb`, snapshot mode).
+The collection and the Atlas `vectorSearch` index (default name
+`vector_index`, cosine, `numDimensions` from the embedder) are auto-created;
+on Atlas Local the indexer rides out the search service's slow boot with
+retries. The server retrieves with `$vectorSearch`.
 
 ---
 
@@ -349,71 +366,47 @@ The same persistence directory also hosts the **parse cache**
 across restarts, so unchanged documents are neither re-downloaded nor
 re-parsed. Disabling persistence also disables the parse cache.
 
-Engine monitoring (advanced, `indexer.monitoring_http_port`): when set, every
-worker process serves the Pathway engine's built-in observability endpoints on
-`127.0.0.1:(port + worker index)` — `GET /metrics` (Prometheus: input/output
-latency gauges, per-operator row counters) and `GET /status`.
-
 Disabling persistence still produces identical vectors for a given set of files;
 it only forgoes the cross-restart diffing and caching.
 
 ---
 
-## 6. Unsupported formats
+## 6. Parsing & modalities
 
-vetosh never implements its own parsers — it dispatches each file to a
-`pathway.xpacks.llm.parsers` parser by extension:
+vetosh never implements its own parsers — each file is routed by extension to
+a `pathway.xpacks.llm.parsers` parser. Every format is enabled by default,
+preferring parsers that need **no API key**, and modalities whose only parser
+requires an absent key are skipped with a single clear warning (never a
+crash):
 
-- `.pdf` → `PypdfParser`
-- `.txt`, `.md`, `.markdown`, `.text` → `Utf8Parser`
-- everything else → `UnstructuredParser` (DOCX, PPTX, XLSX, HTML, EML, CSV, RTF,
-  EPUB and the other formats supported by [unstructured](https://docs.unstructured.io/))
+- text / Markdown → as-is;
+- `.pdf` → `DoclingParser` (layout-aware, tables — `vetosh[docling]`), falling
+  back to `PypdfParser`;
+- Office & co. (DOCX, PPTX, XLSX, HTML, EML, CSV, RTF, EPUB, …) →
+  `UnstructuredParser`;
+- scanned images (PNG, JPG, TIFF, …) → `PaddleOCRParser` (`vetosh[ocr]`);
+- audio (MP3, WAV, …) → Whisper, enabled when `OPENAI_API_KEY` is set;
+- video (MP4, WebM, MOV, …) → TwelveLabs Pegasus (a searchable text
+  description), enabled when `TWELVELABS_API_KEY` is set.
 
-Not supported out of the box:
+The routing is overridable per file pattern via the `parser:` config section
+(first matching rule wins; unmatched files use the defaults above) — e.g.
+route images to a vision model instead of OCR, or set a custom video prompt.
+Routing changes are fingerprint-guarded like splitter changes. Expensive
+parses (video) are cached on disk, so restarts cost nothing.
 
-- **Images** (`.png`, `.jpg`, …) and **audio/video** — these require the vision
-  (`ImageParser`/`SlideParser`) or Whisper (`AudioParser`) parsers, which need a
-  multimodal model and are not wired into the default dispatch.
-- **Encrypted / password-protected PDFs.**
-- **Google-native files** (Google Docs/Sheets/Slides) from a `gdrive` source —
-  they have no direct binary download and would need an export step (TODO).
-  Regular uploaded files (PDF, DOCX, …) in Drive work fine.
-- Any format not handled by the `unstructured` library version you have
-  installed.
-
-Unsupported files are skipped (they simply produce no chunks).
+Still not supported: encrypted / password-protected PDFs; Google-native files
+(Docs/Sheets/Slides) from a `gdrive` source — they have no binary download
+and would need an export step (TODO); any format the installed `unstructured`
+version cannot handle. Unsupported files are skipped and produce no chunks.
 
 ---
 
 ## 7. Architecture
 
-```
-                 ┌──────────────────────── vetosh indexer (Pathway) ───────────────────────┐
-                 │                                                                          │
-   fs · gdrive   │   read(only_metadata)      parse UDF        splitter      embedder       │
-   s3 · sharept  │   ┌──────────────────┐   ┌───────────┐   ┌──────────┐   ┌──────────┐    │
-  ┌───────────┐──┼──▶│ paths + metadata │──▶│ extract   │──▶│  chunk   │──▶│ vectors  │──┐ │
-  └───────────┘  │   │ (no file bytes)  │   │ text      │   │          │   │          │  │ │
-                 │   └──────────────────┘   └─────┬─────┘   └──────────┘   └──────────┘  │ │
-                 │                                │ disk parse cache (DefaultCache        │ │
-                 │                                │ in <persistence>/runtime_calls,       │ │
-                 │                                │ LRU-bounded)                          │ │
-                 └────────────────────────────────┼──────────────────────────────────────┼─┘
-                                                  │                                      │
-                                                  ▼                                      ▼
-                                         ┌──────────────────────────────────────────────────┐
-                                         │              Vector database                      │
-                                         │   (duckdb / pgvector / milvus / qdrant /          │
-                                         │    chroma / weaviate / pinecone / mongodb)        │
-                                         └──────────────────────────────────────────────────┘
-                                                  ▲
-                                                  │ top-k nearest chunks
-                 ┌────────────────────────────────┼──────────────────────────────────────┐
-                 │  chat UI on "/" + /api/v1/*    │                  vetosh server         │
-   client  ──────┼──▶ embed query ────────────────┘  (FastAPI, async, horizontally        │
-                 │                                     scalable, decoupled from indexer)   │
-                 └───────────────────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="assets/architecture.svg" alt="vetosh architecture: sources feed the Pathway indexer, which writes through Pathway's native connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
+</p>
 
 **Why `only_metadata`?** The filesystem connector only ever puts *paths and
 metadata* into the graph, never file contents — so 1 GB of PDFs costs a few KB in
@@ -441,29 +434,21 @@ database**:
   host than the API, `vetosh frontend` is a separate, stateless web tier that
   serves the same chat page and proxies to the API at `frontend.api_url`
   server-side (the API address never reaches the browser).
-- **Indexer.** Runs as its own long-lived process and can be scaled with
-  Pathway's multi-worker support; its persistence lets it resume without
-  re-embedding.
+- **Indexer.** Runs as its own long-lived process and shards across worker
+  processes with one config line (`indexer.workers`, via `pathway spawn`) —
+  the published benchmarks run with 8; its persistence lets it resume
+  without re-embedding.
 - **Vector database.** Scaling and replicating the vector DB itself is the
   user's responsibility and follows that database's own guidance. (The embedded
   DuckDB backend is the exception: it lives in one file next to the indexer and
   is meant for local / single-node setups.)
-```
 
+Engine observability: with `indexer.monitoring_http_port` set, every worker
+process serves the Pathway engine's built-in endpoints on
+`127.0.0.1:(port + worker index)` — `GET /metrics` (Prometheus: input/output
+latency gauges, per-operator row counters) and `GET /status`.
 
-## Regenerating the README GIF
-
-The demo GIF is **emulated** (rendered with Pillow — no terminal recorder or
-browser needed), so it regenerates deterministically anywhere:
-
-```bash
-pip install pillow
-python docs/generate_demos.py     # -> docs/assets/demo.gif
-```
-
-The scene (the Team-tier question, the `sed` price edit, the second answer)
-is parameterized by constants at the top of the script.
-
+---
 
 ## Security & exposing the server
 
@@ -519,3 +504,18 @@ server:
 
 The engine's monitoring endpoints (`indexer.monitoring_http_port`) are
 loopback-only by construction and cannot be exposed directly.
+
+---
+
+## Appendix: regenerating the demo GIF
+
+The README demo GIF is **emulated** (rendered with Pillow — no terminal
+recorder or browser needed), so it regenerates deterministically anywhere:
+
+```bash
+pip install pillow
+python docs/generate_demos.py     # -> docs/assets/demo.gif
+```
+
+The scene (the Team-tier question, the `sed` price edit, the second answer)
+is parameterized by constants at the top of the script.

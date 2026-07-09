@@ -189,8 +189,8 @@ modalities automatically when their key is present:
 | format | parsed by default with | notes |
 |---|---|---|
 | text / Markdown | as-is | |
-| PDF | Docling — layout-aware, tables (falls back to pypdf) | local, free |
-| Office (DOCX, PPTX, XLSX, HTML, EML, EPUB…) | Unstructured | local, free |
+| PDF | Docling — layout-aware, tables (`vetosh[docling]`; falls back to pypdf) | local, free |
+| Office (DOCX, PPTX, XLSX, HTML, EML, EPUB…) | Unstructured (`vetosh[docling]`) | local, free |
 | scanned images (PNG, JPG, TIFF…) | PaddleOCR | local, free |
 | audio (MP3, WAV…) | Whisper | when `OPENAI_API_KEY` is set |
 | video (MP4, WebM, MOV…) | TwelveLabs Pegasus — a searchable text description of the video | when `TWELVELABS_API_KEY` is set |

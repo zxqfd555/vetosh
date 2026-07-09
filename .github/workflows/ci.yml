@@ -46,7 +46,10 @@ jobs:
         run: |
           pip install -U uv
           uv venv .venv
-          uv pip install --python .venv/bin/python -e ".[dev,local]" \
+          # pyfilesystem here is a CI-environment choice, not a package
+          # dependency: it keeps the optional-source tests exercised instead
+          # of being skipped (they importorskip when the extra is absent).
+          uv pip install --python .venv/bin/python -e ".[dev,local,pyfilesystem]" \
             --prerelease=allow --extra-index-url "$PATHWAY_DEV_INDEX"
           .venv/bin/python -c "import pathway; v = pathway.__version__; assert 'dev' in v, v; print('pathway', v)"
       - name: Ruff

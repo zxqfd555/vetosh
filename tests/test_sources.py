@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from vetosh.config.schema import FsSource, GDriveSource, S3Source, SharePointSource, VetoshConfig
 from vetosh.indexer.sources import (
     FsFetcher,
@@ -195,7 +197,8 @@ def test_pyfilesystem_source_validates():
 
 
 def test_pyfilesystem_fetcher_reads_bytes_and_suffix():
-    import fs as pyfs
+    # The pyfilesystem source is an optional extra; the test mirrors that.
+    pyfs = pytest.importorskip("fs")
 
     from vetosh.config.schema import PyFilesystemSource
     from vetosh.indexer.sources import PyFilesystemFetcher, make_fetcher

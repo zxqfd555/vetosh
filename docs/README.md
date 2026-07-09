@@ -408,6 +408,14 @@ version cannot handle. Unsupported files are skipped and produce no chunks.
   <img src="assets/architecture.svg" alt="vetosh architecture: sources feed the Pathway indexer, which writes through Pathway's native connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
 </p>
 
+Inside the indexer, documents move through a Pathway dataflow — every stage
+below is an incremental operator, so a change to one file re-runs only that
+file's slice of the graph:
+
+<p align="center">
+  <img src="assets/indexer-pipeline.svg" alt="The indexer's Pathway dataflow: read in only_metadata mode (paths, never bytes) → parse UDF with parser routing and an LRU disk cache under the persistence directory → split into chunks → embed → snapshot sink emitting upserts and deletes keyed by chunk id into the vector database. A deleted file is retracted by replaying its memoized parse output negated." width="100%">
+</p>
+
 **Why `only_metadata`?** The filesystem connector only ever puts *paths and
 metadata* into the graph, never file contents — so 1 GB of PDFs costs a few KB in
 the pipeline. Text is extracted on demand inside the parse UDF.

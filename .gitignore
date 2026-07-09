@@ -225,3 +225,7 @@ benchmarks/*/compat/*.so
 # Runtime working directory of `vetosh demo` (regenerable: corpus copy,
 # generated config, DuckDB store, persistence)
 vetosh-demo/
+
+# Internal planning document — kept local, never committed (purged from
+# history on 2026-07-09).
+docs/ROADMAP.md

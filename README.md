@@ -120,9 +120,9 @@ see [benchmarks/realtime-data-indexing](benchmarks/realtime-data-indexing):
 | 100 MB | 52 000 | 12 969 | 66 136 | 39 s | 6.6 GB | 0.6 GB | 5/5 |
 | 1 GB | 524 000 | 240 516 | 836 595 | 4.8 min | 6.9 GB | 2.2 GB | 19/20 |
 | 3 GB | 1 573 000 | 841 890 | 2 703 850 | 15 min | 7.3 GB | 6.0 GB | 16/20 |
-| 10 GB | 5 243 000 | 3 423 359 | 10 093 514 | 62 min | 8.8 GB | 20.8 GB | 14/20 |
-| 30 GB | 15 729 000 | 9 202 620 | 29 817 294 | 2.9 h | 12.0 GB | 61.4 GB | 12/20 |
-| 50 GB | 26 214 000 | 17 083 603 | 53 913 774 | 5.8 h | 16.4 GB | 107.8 GB | 12/20 |
+| 10 GB | 5 243 000 | 3 423 359 | 10 093 514 | 58 min | 7.7 GB | 20.8 GB | 15/20 |
+| 30 GB | 15 729 000 | 9 202 620 | 29 817 294 | 2.9 h | 10.1 GB | 61.3 GB | 11/20 |
+| 50 GB | 26 214 000 | 17 083 603 | 53 913 774 | 5.5 h | 13.1 GB | 107.9 GB | 12/20 |
 
 Documents flow through the pipeline rather than accumulating in it, so
 what stays in memory is short and worth spelling out.

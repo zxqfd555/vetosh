@@ -1,4 +1,4 @@
-"""End-to-end test for ``vetosh up`` (supervisor semantics).
+"""End-to-end test for ``serviette up`` (supervisor semantics).
 
 Uses static sources + DuckDB + the mock embedder: the indexer child finishes
 its one-shot pass and exits 0, the server child keeps serving — exercising
@@ -54,7 +54,7 @@ def test_up_serves_after_static_indexing(tmp_path, tcp_port):
 
     env = dict(os.environ)
     proc = subprocess.Popen(
-        [sys.executable, "-m", "vetosh.cli", "up", "--config", str(cfg)],
+        [sys.executable, "-m", "serviette.cli", "up", "--config", str(cfg)],
         cwd=REPO_ROOT,
         env=env,
     )
@@ -93,10 +93,10 @@ def test_index_ready_probe_duckdb(tmp_path):
     """_index_ready: False before the indexer created anything, True after."""
     import duckdb
 
-    from vetosh.config.schema import VetoshConfig
-    from vetosh.up import _index_ready
+    from serviette.config.schema import ServietteConfig
+    from serviette.up import _index_ready
 
-    config = VetoshConfig.model_validate(
+    config = ServietteConfig.model_validate(
         {
             "sources": [{"type": "fs", "path": str(tmp_path)}],
             "vector_db": {
@@ -127,11 +127,11 @@ def test_index_ready_probe_duckdb(tmp_path):
 
 
 def test_sources_look_empty(tmp_path):
-    from vetosh.config.schema import VetoshConfig
-    from vetosh.up import _sources_look_empty
+    from serviette.config.schema import ServietteConfig
+    from serviette.up import _sources_look_empty
 
     def cfg(path):
-        return VetoshConfig.model_validate(
+        return ServietteConfig.model_validate(
             {
                 "sources": [{"type": "fs", "path": str(path)}],
                 "vector_db": {"type": "duckdb", "path": str(tmp_path / "e.duckdb")},
@@ -147,7 +147,7 @@ def test_sources_look_empty(tmp_path):
     (docs / "sub" / "a.txt").write_text("hi")
     assert not _sources_look_empty(cfg(docs))  # a real file
 
-    remote = VetoshConfig.model_validate(
+    remote = ServietteConfig.model_validate(
         {
             "sources": [
                 {"type": "fs", "path": str(docs)},
@@ -161,11 +161,11 @@ def test_sources_look_empty(tmp_path):
 
 
 def test_prepare_duckdb_creates_empty_queryable_store(tmp_path):
-    from vetosh.config.schema import VetoshConfig
-    from vetosh.indexer.prepare import prepare_backend
-    from vetosh.up import _index_ready
+    from serviette.config.schema import ServietteConfig
+    from serviette.indexer.prepare import prepare_backend
+    from serviette.up import _index_ready
 
-    config = VetoshConfig.model_validate(
+    config = ServietteConfig.model_validate(
         {
             "sources": [{"type": "fs", "path": str(tmp_path)}],
             "vector_db": {
@@ -184,7 +184,7 @@ def test_prepare_duckdb_creates_empty_queryable_store(tmp_path):
 
 
 def test_up_empty_folder_starts_and_indexes_live(tmp_path, tcp_port):
-    """An empty source folder must not block `vetosh up`: the server starts
+    """An empty source folder must not block `serviette up`: the server starts
     over the pre-created empty DuckDB store, /retrieve answers (empty), and a
     file dropped in afterwards is indexed live — proving the writer accepts
     the pre-created table (schema parity) end-to-end."""
@@ -212,7 +212,7 @@ def test_up_empty_folder_starts_and_indexes_live(tmp_path, tcp_port):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(yaml.safe_dump(config))
     proc = subprocess.Popen(
-        [sys.executable, "-m", "vetosh.cli", "up", "--config", str(cfg)],
+        [sys.executable, "-m", "serviette.cli", "up", "--config", str(cfg)],
         cwd=tmp_path,
         env=dict(
             os.environ,

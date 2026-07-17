@@ -14,7 +14,7 @@ import pytest
 
 # Single source of truth for the deterministic fake embedding, shared with the
 # indexer's test-only "mock" embedder so indexer and server vectors agree.
-from vetosh.testing import EMBED_DIM, fake_embedding  # noqa: F401
+from serviette.testing import EMBED_DIM, fake_embedding  # noqa: F401
 
 
 class MockServerEmbedder:
@@ -77,7 +77,7 @@ def mock_llm() -> MockLLM:
 def mock_xpack_embedder():
     """A Pathway UDF mock embedder for the indexer graph (returns ndarray)."""
 
-    from vetosh.testing import build_mock_embedder
+    from serviette.testing import build_mock_embedder
 
     return build_mock_embedder()
 
@@ -93,7 +93,7 @@ def write_duckdb_rows(path: Path, rows: list[dict]) -> None:
 
     conn = duckdb.connect(str(path))
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS vetosh_embeddings ("
+        "CREATE TABLE IF NOT EXISTS serviette_embeddings ("
         "  chunk_id VARCHAR PRIMARY KEY,"
         "  text VARCHAR,"
         "  metadata VARCHAR,"
@@ -102,7 +102,7 @@ def write_duckdb_rows(path: Path, rows: list[dict]) -> None:
     )
     for row in rows:
         conn.execute(
-            "INSERT OR REPLACE INTO vetosh_embeddings VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO serviette_embeddings VALUES (?, ?, ?, ?)",
             (
                 row["id"],
                 row["text"],

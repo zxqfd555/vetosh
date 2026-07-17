@@ -3,12 +3,12 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vetosh"
+name = "serviette"
 version = "0.1.0"
 description = "A universal, no-code RAG server for any vector database, built on the Pathway Live Data Framework."
 readme = "README.md"
 license = { file = "LICENSE" }
-authors = [{ name = "vetosh contributors" }]
+authors = [{ name = "serviette contributors" }]
 keywords = ["rag", "pathway", "vector-database", "retrieval", "llm", "embeddings"]
 # Pathway requires CPython >= 3.10.
 requires-python = ">=3.10"
@@ -25,7 +25,7 @@ dependencies = [
     # >=0.31.2.dev899: the first build where the xpack imports lazily
     # (Pathway #10521) — older dev builds crash on import without the
     # xpack-llm-docs extra. Heavy document parsers (docling, unstructured)
-    # are opt-in via the vetosh extras below.
+    # are opt-in via the serviette extras below.
     "pathway[xpack-llm]>=0.31.2.dev899",
     "fastapi>=0.110",
     "uvicorn>=0.27",
@@ -63,7 +63,7 @@ mongodb = ["pymongo>=4.9"]
 local = ["sentence-transformers>=3.0"]
 gemini = ["google-generativeai>=0.8"]
 all = [
-    "vetosh[openai,gdrive,pgvector,milvus,qdrant,chroma,weaviate,pinecone,mongodb]",
+    "serviette[openai,gdrive,pgvector,milvus,qdrant,chroma,weaviate,pinecone,mongodb]",
 ]
 dev = [
     "pytest>=8.0",
@@ -88,18 +88,18 @@ dev = [
 ]
 
 [project.scripts]
-vetosh = "vetosh.cli:main"
+serviette = "serviette.cli:main"
 
 [project.urls]
 Homepage = "https://pathway.com"
-Documentation = "https://github.com/pathwaycom/vetosh"
+Documentation = "https://github.com/pathwaycom/serviette"
 
 [tool.setuptools.packages.find]
-include = ["vetosh*"]
+include = ["serviette*"]
 
 [tool.setuptools.package-data]
-"vetosh.frontend" = ["static/*"]
-"vetosh.demo" = ["corpus/*.md"]
+"serviette.frontend" = ["static/*"]
+"serviette.demo" = ["corpus/*.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

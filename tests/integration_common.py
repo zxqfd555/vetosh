@@ -24,8 +24,8 @@ from typing import Any, Callable
 import pytest
 import yaml
 
-from vetosh.server.accessors.abstract import AsyncVectorAccessor
-from vetosh.testing import fake_embedding
+from serviette.server.accessors.abstract import AsyncVectorAccessor
+from serviette.testing import fake_embedding
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -53,7 +53,7 @@ def write_config(tmp_path: Path, docs: Path, vector_db: dict[str, Any]) -> Path:
 def run_indexer(cfg: Path, _legacy_cache_dir: Path | None = None) -> None:
     env = dict(os.environ)
     proc = subprocess.run(
-        [sys.executable, "-m", "vetosh.cli", "indexer", "--config", str(cfg)],
+        [sys.executable, "-m", "serviette.cli", "indexer", "--config", str(cfg)],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,

@@ -1,22 +1,22 @@
-# Self-contained benchmark: Qdrant + vetosh indexer + vetosh server.
+# Self-contained benchmark: Qdrant + serviette indexer + serviette server.
 #
 # Parametrized by env vars:
 #   BENCH_SIZE         dataset folder under ./datasets (default 100mb)
-#   BENCH_SERVER_PORT  host port for the vetosh server API (default 8300)
+#   BENCH_SERVER_PORT  host port for the serviette server API (default 8300)
 #   BENCH_QDRANT_PORT  host port for Qdrant REST (readiness probes, default 8301)
 #
 # NOTE (dev setup): until a Pathway release ships the qdrant connector, the
-# vetosh containers run against a pathway source tree + a prebuilt engine
+# serviette containers run against a pathway source tree + a prebuilt engine
 # (mounted read-only, paths below). The published version of this benchmark
-# will replace the mounts with `pip install vetosh[qdrant,local]`.
+# will replace the mounts with `pip install serviette[qdrant,local]`.
 
-x-vetosh: &vetosh
+x-serviette: &serviette
   image: python:3.12-slim
-  working_dir: /home/sergey/vetosh
-  environment: &vetosh-env
+  working_dir: /home/sergey/serviette
+  environment: &serviette-env
     # Default: the dev worktree + local venv; override with BENCH_PYTHONPATH
     # to run against an installed wheel (e.g. the nightly venv).
-    PYTHONPATH: "${BENCH_PYTHONPATH:-/opt/pathway-src/python:/home/sergey/vetosh:/home/sergey/vetosh/.venv312/lib/python3.12/site-packages:/home/sergey/vetosh/.venv312/lib64/python3.12/site-packages}"
+    PYTHONPATH: "${BENCH_PYTHONPATH:-/opt/pathway-src/python:/home/sergey/serviette:/home/sergey/serviette/.venv312/lib/python3.12/site-packages:/home/sergey/serviette/.venv312/lib64/python3.12/site-packages}"
     PATHWAY_LICENSE_KEY: ${PATHWAY_LICENSE_KEY:-}
     HF_HOME: /hf-cache
     # Model cache is pre-warmed by run_bench on the host; containers never
@@ -32,12 +32,12 @@ x-vetosh: &vetosh
     _RJEM_MALLOC_CONF: ${BENCH_JEMALLOC_CONF:-}
     MALLOC_ARENA_MAX: ${BENCH_MALLOC_ARENA_MAX:-}
   volumes:
-    - /home/sergey/vetosh:/home/sergey/vetosh:ro
-    - /mnt/scratch/sergey/vetosh-nightly-venv:/opt/nightly-venv:ro
+    - /home/sergey/serviette:/home/sergey/serviette:ro
+    - /mnt/scratch/sergey/serviette-nightly-venv:/opt/nightly-venv:ro
     # Local-disk copy of the venv overlaid on the same path: keeps NFS out of
     # the containers' hot path (torch import reads GBs; NFS hiccups froze
     # runs in D-state). Refresh with rsync after pip installs.
-    - /mnt/scratch/sergey/vetosh-venv312:/home/sergey/vetosh/.venv312:ro
+    - /mnt/scratch/sergey/serviette-venv312:/home/sergey/serviette/.venv312:ro
     - /mnt/scratch/sergey/iot-pathway-develop-wt/public/pathway/python:/opt/pathway-src/python:ro
     - /mnt/scratch/sergey/pixi/IoT-Pathway-18069838481262607842/envs/default/lib:/opt/pixi-lib:ro
     - ./compat:/opt/compat:ro
@@ -52,12 +52,12 @@ services:
       - "127.0.0.1:${BENCH_QDRANT_PORT:-8301}:6333"
 
   indexer:
-    <<: *vetosh
+    <<: *serviette
     # Worker processes come from `indexer.workers` in config.yaml (the
     # entrypoint re-executes itself through `pathway spawn --processes N`).
-    command: ["python", "-m", "vetosh.cli", "indexer", "--config", "/bench/config.yaml"]
+    command: ["python", "-m", "serviette.cli", "indexer", "--config", "/bench/config.yaml"]
     environment:
-      <<: *vetosh-env
+      <<: *serviette-env
       # torch threads PER WORKER; without this each worker grabs all cores
       # and 8 workers thrash (cores / workers is a good default).
       OMP_NUM_THREADS: ${BENCH_OMP_THREADS:-12}
@@ -65,8 +65,8 @@ services:
       - qdrant
 
   server:
-    <<: *vetosh
-    command: ["python", "-m", "vetosh.cli", "server", "--config", "/bench/config.yaml"]
+    <<: *serviette
+    command: ["python", "-m", "serviette.cli", "server", "--config", "/bench/config.yaml"]
     ports:
       - "127.0.0.1:${BENCH_SERVER_PORT:-8300}:8000"
     depends_on:

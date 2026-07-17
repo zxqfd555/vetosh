@@ -26,7 +26,7 @@ def _has(module: str) -> bool:
 
 @pytest.fixture()
 def registry():
-    from vetosh.indexer.graph import ParserRegistry
+    from serviette.indexer.graph import ParserRegistry
 
     return ParserRegistry()
 
@@ -37,7 +37,7 @@ def pdf_bytes() -> bytes:
     doc = fpdf.FPDF()
     doc.add_page()
     doc.set_font("Helvetica", size=14)
-    doc.cell(text="The vetosh benchmark corpus fits twenty-six million pages.")
+    doc.cell(text="The serviette benchmark corpus fits twenty-six million pages.")
     return bytes(doc.output())
 
 
@@ -91,12 +91,12 @@ def test_scanned_image_ocr(registry):
         )
     except OSError:
         font = ImageFont.load_default()
-    draw.text((40, 80), "VETOSH INDEXES SCANS", fill="black", font=font)
+    draw.text((40, 80), "SERVIETTE INDEXES SCANS", fill="black", font=font)
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
 
     kind, _ = registry._route(".png", "scan.png")
     assert kind == "paddle_ocr"
     text = registry.parse(buffer.getvalue(), ".png", "scan.png")
-    assert "VETOSH" in text.upper()
+    assert "SERVIETTE" in text.upper()
     assert "SCANS" in text.upper()

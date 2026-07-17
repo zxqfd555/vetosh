@@ -3,12 +3,12 @@
 # secret is configured and skip gracefully when it is not.
 #
 # Pathway is installed from the internal dev package index (prebuilt wheels;
-# no released Pathway ships the connectors vetosh needs yet). uv is required:
+# no released Pathway ships the connectors serviette needs yet). uv is required:
 # pip's resolver times out against the dev index. --prerelease=allow is
 # REQUIRED too — the index carries .dev builds only, and without the flag the
 # resolver silently falls back to the released PyPI pathway.
 # NOTE for the pre-publication checklist: remove the internal index URL when
-# vetosh can depend on a released Pathway.
+# serviette can depend on a released Pathway.
 
 name: CI
 
@@ -53,7 +53,7 @@ jobs:
             --prerelease=allow --extra-index-url "$PATHWAY_DEV_INDEX"
           .venv/bin/python -c "import pathway; v = pathway.__version__; assert 'dev' in v, v; print('pathway', v)"
       - name: Ruff
-        run: .venv/bin/python -m ruff check vetosh tests
+        run: .venv/bin/python -m ruff check serviette tests
       - name: Fast tests
         run: .venv/bin/python -m pytest tests/ -m "not slow and not integration" -q
 

@@ -215,16 +215,16 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# vetosh test-run runtime artifacts
+# serviette test-run runtime artifacts
 
 # benchmark datasets and results (large, generated)
 benchmarks/*/datasets/
 benchmarks/*/results/
 benchmarks/*/compat/*.so
 
-# Runtime working directory of `vetosh demo` (regenerable: corpus copy,
+# Runtime working directory of `serviette demo` (regenerable: corpus copy,
 # generated config, DuckDB store, persistence)
-vetosh-demo/
+serviette-demo/
 
 # Internal planning document — kept local, never committed (purged from
 # history on 2026-07-09).

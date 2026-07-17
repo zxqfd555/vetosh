@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import yaml
 
-from vetosh.config.schema import VetoshConfig, load_config_dict
-from vetosh.quickstart.wizard import ScriptedPrompter, Wizard, build_config, dump_yaml
+from serviette.config.schema import ServietteConfig, load_config_dict
+from serviette.quickstart.wizard import ScriptedPrompter, Wizard, build_config, dump_yaml
 
 BASE = {
     "license_key": "test-license-key-123",
     "sources": [{"type": "fs", "path": "/data/docs", "glob": "**/*"}],
     "vector_db_type": "pgvector",
     "pg_connection_string": "postgresql://u:p@localhost/db",
-    "collection": "vetosh_embeddings",
+    "collection": "serviette_embeddings",
     "embedder_type": "openai",
     "embedder_model": "text-embedding-3-small",
     "embedder_api_key": "${OPENAI_API_KEY}",
@@ -25,7 +25,7 @@ BASE = {
 }
 
 
-def _validate(answers: dict) -> VetoshConfig:
+def _validate(answers: dict) -> ServietteConfig:
     config_dict = build_config(answers)
     # Round-trips through YAML the way the wizard writes it.
     reparsed = yaml.safe_load(dump_yaml(config_dict))
@@ -119,7 +119,7 @@ def test_mongodb_vector_db():
         "config_type": "indexer",
         "vector_db_type": "mongodb",
         "mongodb_connection_string": "mongodb+srv://u:p@cluster.example.net",
-        "mongodb_database": "vetosh",
+        "mongodb_database": "serviette",
     }
     cfg = _validate(answers)
     assert cfg.vector_db.type == "mongodb"

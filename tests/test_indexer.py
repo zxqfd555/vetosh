@@ -31,7 +31,7 @@ def _write_config(tmp_path, docs_dir, store, persist_dir, *, persistence: bool) 
         "sources": [
             {"type": "fs", "path": str(docs_dir), "glob": "**/*", "mode": "static"}
         ],
-        "vector_db": {"type": "duckdb", "path": str(store), "table": "vetosh_embeddings"},
+        "vector_db": {"type": "duckdb", "path": str(store), "table": "serviette_embeddings"},
         "embedder": {"type": "mock"},
         "splitter": {"type": "token_count", "chunk_size": 512, "chunk_overlap": 50},
         "persistence": {
@@ -48,7 +48,7 @@ def _write_config(tmp_path, docs_dir, store, persist_dir, *, persistence: bool) 
 def _run_pass(cfg_path: Path, cache_dir: Path | None = None) -> None:
     env = dict(os.environ)
     proc = subprocess.run(
-        [sys.executable, "-m", "vetosh.cli", "indexer", "--config", str(cfg_path)],
+        [sys.executable, "-m", "serviette.cli", "indexer", "--config", str(cfg_path)],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -66,7 +66,7 @@ def _read_store(store: Path) -> list[dict]:
     conn = duckdb.connect(str(store), read_only=True)
     try:
         rows = conn.execute(
-            "SELECT chunk_id, text, metadata FROM vetosh_embeddings"
+            "SELECT chunk_id, text, metadata FROM serviette_embeddings"
         ).fetchall()
     finally:
         conn.close()
@@ -168,7 +168,7 @@ def test_monitoring_endpoints_serve_prometheus(tmp_path, tcp_port):
     cfg_path.write_text(yaml.safe_dump(config))
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "vetosh.cli", "indexer", "--config", str(cfg_path)],
+        [sys.executable, "-m", "serviette.cli", "indexer", "--config", str(cfg_path)],
         cwd=tmp_path,
         env=dict(os.environ, PYTHONPATH=f"{REPO_ROOT}{os.pathsep}" + os.environ.get("PYTHONPATH", "")),
         stdout=subprocess.PIPE,

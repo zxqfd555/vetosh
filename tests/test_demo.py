@@ -1,11 +1,11 @@
-"""Unit tests for the ``vetosh demo`` scaffolding (no processes spawned)."""
+"""Unit tests for the ``serviette demo`` scaffolding (no processes spawned)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from vetosh.config.schema import load_config_dict
-from vetosh.demo import build_demo_config, choose_embedder, prepare_demo_dir
+from serviette.config.schema import load_config_dict
+from serviette.demo import build_demo_config, choose_embedder, prepare_demo_dir
 
 
 def test_demo_config_validates(tmp_path):
@@ -47,7 +47,7 @@ def test_prepare_demo_dir_copies_corpus_and_writes_config(tmp_path, monkeypatch)
     assert any(p.name == "pricing.md" for p in docs)
     assert config_path.exists()
     # The generated file round-trips through the normal config loader.
-    from vetosh.config.schema import load_config
+    from serviette.config.schema import load_config
 
     cfg = load_config(config_path)
     assert Path(cfg.sources[0].path) == tmp_path / "docs"
@@ -58,7 +58,7 @@ def test_prepare_demo_dir_copies_corpus_and_writes_config(tmp_path, monkeypatch)
 def test_demo_key_change_keeps_local_index(tmp_path, monkeypatch):
     """Exporting OPENAI_API_KEY between runs upgrades the LLM but must not
     touch the locally-embedded index."""
-    from vetosh.demo import prepare_demo_dir
+    from serviette.demo import prepare_demo_dir
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     prepare_demo_dir(tmp_path, port=1, license_key="K")  # local embedder
@@ -79,7 +79,7 @@ def test_demo_key_change_keeps_local_index(tmp_path, monkeypatch):
 
 
 def test_demo_same_embedder_keeps_index(tmp_path, monkeypatch):
-    from vetosh.demo import prepare_demo_dir
+    from serviette.demo import prepare_demo_dir
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-real")
     prepare_demo_dir(tmp_path, port=1, license_key="K")

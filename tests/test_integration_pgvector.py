@@ -26,15 +26,15 @@ from tests.dockerutil import (
     stop_container,
     wait_until,
 )
-from vetosh.config.schema import PgVectorConfig
-from vetosh.server.accessors.pgvector import PgVectorAccessor
-from vetosh.testing import fake_embedding
+from serviette.config.schema import PgVectorConfig
+from serviette.server.accessors.pgvector import PgVectorAccessor
+from serviette.testing import fake_embedding
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IMAGE = "pgvector/pgvector:pg16"
-TABLE = "vetosh_embeddings"
+TABLE = "serviette_embeddings"
 
 # No schema setup here: the indexer's prepare_backend() must create the
 # extension, the table and the HNSW index on its own (that is under test).
@@ -115,7 +115,7 @@ def _write_config(tmp_path: Path, docs: Path, dsn: str) -> Path:
 def _run_indexer(cfg: Path, cache_dir: Path) -> None:
     env = dict(os.environ)
     proc = subprocess.run(
-        [sys.executable, "-m", "vetosh.cli", "indexer", "--config", str(cfg)],
+        [sys.executable, "-m", "serviette.cli", "indexer", "--config", str(cfg)],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,

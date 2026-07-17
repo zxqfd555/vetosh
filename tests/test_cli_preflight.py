@@ -9,7 +9,7 @@ import pytest
 
 
 def test_released_pathway_gets_instructions(monkeypatch):
-    from vetosh import cli
+    from serviette import cli
 
     fake = types.ModuleType("pathway")
     fake.__version__ = "0.31.1"
@@ -25,7 +25,7 @@ def test_released_pathway_gets_instructions(monkeypatch):
 
 
 def test_dev_pathway_passes(monkeypatch):
-    from vetosh import cli
+    from serviette import cli
 
     fake = types.ModuleType("pathway")
     fake.__version__ = "0.31.2-dev898"

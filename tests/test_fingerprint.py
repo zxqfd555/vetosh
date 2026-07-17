@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from vetosh.config.schema import load_config_dict
-from vetosh.indexer.fingerprint import _FILENAME, build_fingerprint, check_fingerprint
+from serviette.config.schema import load_config_dict
+from serviette.indexer.fingerprint import _FILENAME, build_fingerprint, check_fingerprint
 
 
 def _config(tmp_path, chunk_size=512, embedder_model=None, enabled=True):
@@ -44,7 +44,7 @@ def test_unchanged_config_passes(tmp_path):
 
 
 def test_changed_splitter_aborts_without_confirmation(tmp_path, monkeypatch):
-    monkeypatch.delenv("VETOSH_ACCEPT_FINGERPRINT_CHANGES", raising=False)
+    monkeypatch.delenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES", raising=False)
     check_fingerprint(_config(tmp_path, chunk_size=512))
     with pytest.raises(SystemExit, match="Refusing to start"):
         check_fingerprint(_config(tmp_path, chunk_size=256))
@@ -52,17 +52,17 @@ def test_changed_splitter_aborts_without_confirmation(tmp_path, monkeypatch):
 
 def test_env_confirmation_accepts_and_updates(tmp_path, monkeypatch):
     check_fingerprint(_config(tmp_path, chunk_size=512))
-    monkeypatch.setenv("VETOSH_ACCEPT_FINGERPRINT_CHANGES", "1")
+    monkeypatch.setenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES", "1")
     check_fingerprint(_config(tmp_path, chunk_size=256))
     stored = json.loads((tmp_path / "persist" / _FILENAME).read_text())
     assert stored["splitter"]["chunk_size"] == 256
     # Accepted once — the updated fingerprint now matches without the env.
-    monkeypatch.delenv("VETOSH_ACCEPT_FINGERPRINT_CHANGES")
+    monkeypatch.delenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES")
     check_fingerprint(_config(tmp_path, chunk_size=256))
 
 
 def test_embedder_change_is_flagged(tmp_path, monkeypatch):
-    monkeypatch.delenv("VETOSH_ACCEPT_FINGERPRINT_CHANGES", raising=False)
+    monkeypatch.delenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES", raising=False)
     check_fingerprint(_config(tmp_path, embedder_model="text-embedding-3-small"))
     with pytest.raises(SystemExit):
         check_fingerprint(_config(tmp_path, embedder_model="text-embedding-3-large"))

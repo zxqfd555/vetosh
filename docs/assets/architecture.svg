@@ -34,7 +34,7 @@
 
   <!-- ============ indexer ============ -->
   <rect x="270" y="70" width="310" height="210" rx="10" fill="#ffffff" stroke="#c3c8f0"/>
-  <text x="425" y="98" text-anchor="middle" font-size="15" font-weight="650" fill="#4338ca">vetosh indexer · Pathway</text>
+  <text x="425" y="98" text-anchor="middle" font-size="15" font-weight="650" fill="#4338ca">serviette indexer · Pathway</text>
   <g font-size="12" fill="#1f2328" text-anchor="middle">
     <rect x="288" y="114" width="60" height="26" rx="6" fill="#eef0f4"/>
     <text x="318" y="131">watch</text>
@@ -93,7 +93,7 @@
 
   <!-- ============ server ============ -->
   <rect x="400" y="412" width="550" height="130" rx="10" fill="#ffffff" stroke="#c3c8f0"/>
-  <text x="675" y="440" text-anchor="middle" font-size="15" font-weight="650" fill="#4338ca">vetosh server</text>
+  <text x="675" y="440" text-anchor="middle" font-size="15" font-weight="650" fill="#4338ca">serviette server</text>
   <g font-size="12" fill="#1f2328" text-anchor="middle">
     <rect x="425" y="456" width="150" height="27" rx="6" fill="#eef0f4"/>
     <text x="500" y="474">chat UI on “/”</text>

@@ -1,27 +1,27 @@
-# vetosh
+# serviette
 
 **A universal, no-code, always up-to-date RAG server for any vector database
 — powered by the [Pathway](https://pathway.com) Live Data Framework.**
 
 Set up Retrieval-Augmented Generation over your own documents without writing
-any code. Point vetosh at a folder, pick a vector database and an embedder in
+any code. Point serviette at a folder, pick a vector database and an embedder in
 a YAML file, and run a few commands. From then on, any change you make to the
 documents — an edit, a new file, a deletion — is reflected in answers within
 seconds.
 
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="vetosh: CLI walkthrough then the web chat UI" width="100%">
+  <img src="docs/assets/demo.gif" alt="serviette: CLI walkthrough then the web chat UI" width="100%">
 </p>
 <p align="center"><em>From zero to a live RAG stack in two commands — then edit a document and watch the answer change.</em></p>
 
 ```bash
-pip install "vetosh[openai]"
+pip install "serviette[openai]"
 
-vetosh quickstart                       # interactive config wizard
-vetosh up --config config.yaml          # indexer + server together → http://localhost:8989
+serviette quickstart                       # interactive config wizard
+serviette up --config config.yaml          # indexer + server together → http://localhost:8989
 ```
 
-(Or run `vetosh indexer` and `vetosh server` separately — that is what `up`
+(Or run `serviette indexer` and `serviette server` separately — that is what `up`
 supervises, and how production deployments split them.)
 
 The server hosts both the web chat UI (on `/`) and the versioned REST API
@@ -36,7 +36,7 @@ curl -X POST http://localhost:8989/api/v1/retrieve \
 ## Highlights
 
 - **No code.** Configure everything in one YAML file (or generate it with
-  `vetosh quickstart`).
+  `serviette quickstart`).
 - **Any vector DB — 8 backends.** DuckDB (embedded, zero setup — the default),
   pgvector, Qdrant, Milvus, ChromaDB, Weaviate, Pinecone and MongoDB Atlas
   Vector Search. Every backend is written through **Pathway's native
@@ -58,7 +58,7 @@ curl -X POST http://localhost:8989/api/v1/retrieve \
   best parser that needs no API key; drop a file in the folder and it is
   answerable like any document. See [Multimodality](#multimodality).
 - **Reuses Pathway's LLM xpack.** Parsers, splitters and embedders are used
-  as-is — vetosh implements none of its own. Five embedder families (OpenAI,
+  as-is — serviette implements none of its own. Five embedder families (OpenAI,
   LiteLLM, SentenceTransformers, Gemini, Bedrock) work identically on the
   indexer and the server side — including a fully local, credential-free
   stack with local embeddings + DuckDB.
@@ -66,18 +66,18 @@ curl -X POST http://localhost:8989/api/v1/retrieve \
   sharing only the vector DB. The server is stateless and scales
   horizontally; the indexer shards across worker processes with one config
   line. Every part scales on its own.
-- **Web chat UI, same port.** `vetosh server` serves a clean
+- **Web chat UI, same port.** `serviette server` serves a clean
   ChatGPT/Claude-style chat page on `/` next to the versioned API
   (`/api/v1/...`) — same origin, no CORS, nothing extra to run. For split
   deployments (UI on a different host) there is a standalone
-  `vetosh frontend` proxy tier.
+  `serviette frontend` proxy tier.
 - **Free Pathway license.** One click at
   <https://pathway.com/framework/get-license>.
 
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="vetosh architecture: sources feed the Pathway indexer, which writes through Pathway's native connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
+  <img src="docs/assets/architecture.svg" alt="serviette architecture: sources feed the Pathway indexer, which writes through Pathway's native connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
 </p>
 
 **The two halves are fully decoupled.** The indexer (write path) and the
@@ -96,11 +96,11 @@ talk to each other. Their only contract is the vector database itself:
   from its persistence without re-embedding).
 - **The database stays yours.** Vectors live in *your* store in a plain,
   documented schema — other consumers (BI, other apps, a different retrieval
-  stack) can read the same collection; vetosh doesn't hold it hostage. And
+  stack) can read the same collection; serviette doesn't hold it hostage. And
   since the default store is an embedded DuckDB file, trying this out costs
   nothing to set up.
 - **Optional third tier.** For split deployments (UI on a different host than
-  the API) a standalone `vetosh frontend` serves the same chat page and
+  the API) a standalone `serviette frontend` serves the same chat page and
   proxies to the API server-side.
 
 The one deliberate exception: the embedded DuckDB backend trades this
@@ -182,15 +182,15 @@ memory and everything outside embedding time — stay as measured.
 
 ## Multimodality
 
-Every file type is enabled by default. vetosh routes each file to the best
+Every file type is enabled by default. serviette routes each file to the best
 parser that works **without an API key**, and turns on key-requiring
 modalities automatically when their key is present:
 
 | format | parsed by default with | notes |
 |---|---|---|
 | text / Markdown | as-is | |
-| PDF | Docling — layout-aware, tables (`vetosh[docling]`; falls back to pypdf) | local, free |
-| Office (DOCX, PPTX, XLSX, HTML, EML, EPUB…) | Unstructured (`vetosh[docling]`) | local, free |
+| PDF | Docling — layout-aware, tables (`serviette[docling]`; falls back to pypdf) | local, free |
+| Office (DOCX, PPTX, XLSX, HTML, EML, EPUB…) | Unstructured (`serviette[docling]`) | local, free |
 | scanned images (PNG, JPG, TIFF…) | PaddleOCR | local, free |
 | audio (MP3, WAV…) | Whisper | when `OPENAI_API_KEY` is set |
 | video (MP4, WebM, MOV…) | TwelveLabs Pegasus — a searchable text description of the video | when `TWELVELABS_API_KEY` is set |
@@ -220,7 +220,7 @@ health checks, served without touching the indexer (it reads the vector
 store, like every other query).
 
 **Engine metrics (Prometheus).** The Pathway engine ships its own
-observability server; vetosh exposes it with one config line:
+observability server; serviette exposes it with one config line:
 
 ```yaml
 indexer:
@@ -233,7 +233,7 @@ indexing lag behind the sources) and per-operator row counters, straight
 from the engine's dataflow. Point a Prometheus scrape at the worker ports
 and you get per-stage throughput and freshness graphs with no extra code.
 
-Logs from both processes go to stdout/stderr in plain text; `vetosh up`
+Logs from both processes go to stdout/stderr in plain text; `serviette up`
 interleaves them with per-process prefixes.
 
 ## Security
@@ -254,7 +254,7 @@ architecture and scaling notes live in **[docs/README.md](docs/README.md)**.
 
 ## Development
 
-vetosh currently runs against a **development build of Pathway** (the new
+serviette currently runs against a **development build of Pathway** (the new
 vector-database connectors and the multimodal parsers are not in a released
 Pathway yet). No compilation is needed: CI builds ready-made wheels for
 every commit. From-scratch setup on a fresh machine:
@@ -262,8 +262,8 @@ every commit. From-scratch setup on a fresh machine:
 ```bash
 # 0. Prerequisites: Python >= 3.10 (3.12 recommended) and git.
 
-# 1. vetosh in its own virtualenv
-git clone https://github.com/zxqfd555/vetosh.git && cd vetosh
+# 1. serviette in its own virtualenv
+git clone https://github.com/pathwaycom/serviette.git && cd serviette
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -U uv
@@ -271,7 +271,7 @@ pip install -U uv
 # against the dev package index; uv resolves the same set in seconds.
 # --prerelease=allow is REQUIRED: the dev index carries .dev builds only,
 # and without the flag the resolver silently falls back to the released
-# PyPI pathway, which lacks the connectors vetosh needs.
+# PyPI pathway, which lacks the connectors serviette needs.
 uv pip install -e ".[dev,local]" --prerelease=allow \
     --extra-index-url https://packages.pathway.com/966431ef6ba
 python -c "import pathway; print(pathway.__version__)"   # must print a .dev build
@@ -280,12 +280,12 @@ python -c "import pathway; print(pathway.__version__)"   # must print a .dev bui
 export PATHWAY_LICENSE_KEY=...
 
 # 3. Sanity check: zero-to-chat on the bundled corpus
-vetosh demo                        # -> http://localhost:8989
+serviette demo                        # -> http://localhost:8989
 ```
 
 Notes:
 
-- `vetosh demo` indexes with the **local** embedder (no keys, no API cost);
+- `serviette demo` indexes with the **local** embedder (no keys, no API cost);
   export `OPENAI_API_KEY` before running it if you want real generated
   answers in `/rag` — the key upgrades only the answer composition, never
   the index.
@@ -302,7 +302,7 @@ pytest                         # everything
 Per-backend clients install as extras — pick what you use:
 
 ```bash
-pip install "vetosh[qdrant]"      # also: pgvector, milvus, chroma, weaviate,
+pip install "serviette[qdrant]"      # also: pgvector, milvus, chroma, weaviate,
                                   #       pinecone, mongodb, local, gemini, all
 ```
 

@@ -19,13 +19,13 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import run_backend_scenario
-from vetosh.config.schema import ChromaConfig
-from vetosh.server.accessors.chroma import ChromaAccessor
+from serviette.config.schema import ChromaConfig
+from serviette.server.accessors.chroma import ChromaAccessor
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 IMAGE = "chromadb/chroma:1.5.9"
-COLLECTION = "vetosh_embeddings"
+COLLECTION = "serviette_embeddings"
 
 
 def _heartbeat(port: int) -> bool:

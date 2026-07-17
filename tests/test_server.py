@@ -6,9 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import fake_embedding, write_duckdb_rows
-from vetosh.config.schema import DuckDbConfig, EmbedderConfig, VetoshConfig
-from vetosh.server.accessors.duckdb import DuckDbAccessor
-from vetosh.server.main import create_app
+from serviette.config.schema import DuckDbConfig, EmbedderConfig, ServietteConfig
+from serviette.server.accessors.duckdb import DuckDbAccessor
+from serviette.server.main import create_app
 
 DOCS = ["alpha document about cats", "beta report on dogs", "gamma notes on birds"]
 
@@ -30,7 +30,7 @@ def store_path(tmp_path):
 
 
 def _client(store_path, embedder, llm=None):
-    config = VetoshConfig(
+    config = ServietteConfig(
         vector_db=DuckDbConfig(type="duckdb", path=str(store_path)),
         embedder=EmbedderConfig(type="openai"),
     )
@@ -93,7 +93,7 @@ def test_serves_embedded_chat_page(store_path, mock_server_embedder):
     assert "text/html" in resp.headers["content-type"]
     assert "__APP_TITLE__" not in resp.text
     # Empty api_url means "same origin" for the page.
-    assert cfg == {"title": "vetosh", "api_url": ""}
+    assert cfg == {"title": "serviette", "api_url": ""}
 
 
 def test_stats_endpoint(store_path, mock_server_embedder):
@@ -106,7 +106,7 @@ def test_stats_endpoint(store_path, mock_server_embedder):
 
 
 def test_frontend_can_be_disabled(store_path, mock_server_embedder):
-    config = VetoshConfig(
+    config = ServietteConfig(
         vector_db=DuckDbConfig(type="duckdb", path=str(store_path)),
         embedder=EmbedderConfig(type="openai"),
         server={"serve_frontend": False},
@@ -121,7 +121,7 @@ def test_frontend_can_be_disabled(store_path, mock_server_embedder):
 def test_index_not_ready_returns_friendly_503(tmp_path, mock_server_embedder):
     """Standalone server before the indexer ran: 503 + a human message.
 
-    (The orchestrated path never hits this: `vetosh up` holds the server
+    (The orchestrated path never hits this: `serviette up` holds the server
     back until the store is queryable.)
     """
     missing = tmp_path / "never-created.duckdb"
@@ -163,7 +163,7 @@ def test_cors_disabled_by_default(store_path, mock_server_embedder):
 
 
 def test_cors_opt_in_allowlist(store_path, mock_server_embedder):
-    config = VetoshConfig(
+    config = ServietteConfig(
         vector_db=DuckDbConfig(type="duckdb", path=str(store_path)),
         embedder=EmbedderConfig(type="openai"),
         server={"cors_origins": ["https://app.example.com"]},

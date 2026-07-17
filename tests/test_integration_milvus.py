@@ -33,7 +33,7 @@ pytest.importorskip("pymilvus", reason="pymilvus not installed")
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-COLLECTION = "vetosh_embeddings"
+COLLECTION = "serviette_embeddings"
 
 
 def _config(tmp_path: Path, docs: Path, uri: str) -> dict:

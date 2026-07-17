@@ -7,7 +7,7 @@ browser needed — so they regenerate deterministically anywhere:
     python docs/generate_demos.py
 
 Output:
-    docs/assets/demo.gif   the four `vetosh` commands + output, then the chat UI
+    docs/assets/demo.gif   the four `serviette` commands + output, then the chat UI
                            answering a question (two scenes, one GIF)
 
 Requires Pillow (``pip install pillow``).
@@ -82,13 +82,13 @@ T_PAD = 24
 T_LINE_H = 30
 
 SCRIPT_UP = [
-    ("cmd", "vetosh quickstart"),
+    ("cmd", "serviette quickstart"),
     ("out", "  ? Where are your documents?   › ./docs", T_OUT),
     ("out", "  ? Vector database             › DuckDB (embedded, zero setup)", T_OUT),
     ("out", "  ? Embeddings                  › local · no API key needed", T_OUT),
     ("out", "  ✓ Wrote config.yaml", T_OUT),
     ("gap", ""),
-    ("cmd", "vetosh up --config config.yaml"),
+    ("cmd", "serviette up --config config.yaml"),
     ("out", "  [indexer] watching ./docs  (fs · streaming)", T_OUT),
     ("out", "  [indexer] parsed 128 docs · embedded 1,544 chunks → duckdb", T_ACCENT),
     ("out", "  [server]  chat UI + API on http://localhost:8989", T_ACCENT),
@@ -111,7 +111,7 @@ def _draw_terminal(lines, typing) -> Image.Image:
     d.rounded_rectangle([0, 0, T_W, 40], radius=0, fill=T_BAR)
     for i, c in enumerate([(255, 95, 86), (255, 189, 46), (39, 201, 63)]):
         d.ellipse([20 + i * 22, 14, 32 + i * 22, 26], fill=c)
-    d.text((T_W // 2, 20), "vetosh — terminal", font=font("sans", 14), fill=T_OUT, anchor="mm")
+    d.text((T_W // 2, 20), "serviette — terminal", font=font("sans", 14), fill=T_OUT, anchor="mm")
 
     y = 56
     for kind, text, color in lines:
@@ -215,7 +215,7 @@ def _draw_frontend(exchanges, composer_text, typing, indexed_note) -> Image.Imag
     # header
     d.line([0, 53, F_W, 53], fill=F_BORDER)
     d.rounded_rectangle([20, 16, 46, 42], radius=8, fill=F_ACCENT)
-    d.text((56, 29), "vetosh", font=sans_b, fill=F_TEXT, anchor="lm")
+    d.text((56, 29), "serviette", font=sans_b, fill=F_TEXT, anchor="lm")
     d.text((F_W - 20, 29), f"API · http://localhost:8989 · {indexed_note}",
            font=small, fill=F_SOFT, anchor="rm")
 

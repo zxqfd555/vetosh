@@ -22,12 +22,12 @@ from pathlib import Path
 def _write(uri: str, collection: str, config_json: str) -> object:
     import pathway as pw
 
-    from vetosh.config.schema import VetoshConfig
-    from vetosh.indexer.graph import build_graph, persistence_config
-    from vetosh.indexer.prepare import prepare_backend
+    from serviette.config.schema import ServietteConfig
+    from serviette.indexer.graph import build_graph, persistence_config
+    from serviette.indexer.prepare import prepare_backend
 
-    config = VetoshConfig.model_validate(json.loads(config_json))
-    # The collection (schema + COSINE index) must come from vetosh itself.
+    config = ServietteConfig.model_validate(json.loads(config_json))
+    # The collection (schema + COSINE index) must come from serviette itself.
     prepare_backend(config)
     build_graph(config)
     pw.run(
@@ -50,9 +50,9 @@ def _paths(uri: str, collection: str) -> object:
 
 
 def _retrieve(uri: str, collection: str, query: str) -> object:
-    from vetosh.config.schema import MilvusConfig
-    from vetosh.server.accessors.milvus import MilvusAccessor
-    from vetosh.testing import fake_embedding
+    from serviette.config.schema import MilvusConfig
+    from serviette.server.accessors.milvus import MilvusAccessor
+    from serviette.testing import fake_embedding
 
     async def go():
         accessor = MilvusAccessor(MilvusConfig(uri=uri, collection=collection))

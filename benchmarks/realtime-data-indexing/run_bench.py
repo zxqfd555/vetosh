@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run the real-time indexing benchmark and produce the memory report.
 
-Flow: start Qdrant → start the vetosh indexer (static run over the dataset)
-and the vetosh server → sample the indexer's memory (VmRSS + kernel-tracked
+Flow: start Qdrant → start the serviette indexer (static run over the dataset)
+and the serviette server → sample the indexer's memory (VmRSS + kernel-tracked
 peak VmHWM from /proc/1/status inside the container) every few seconds until
 it finishes → replay the accuracy questions through the server's /api/v1
 retrieve endpoint → write a memory-over-time plot, a CSV, and a JSON summary
@@ -383,7 +383,7 @@ def main() -> None:
     ax2.plot(minutes, [s[4] for s in samples], color="tab:green", alpha=0.6, linewidth=1.4, label="chunks in DB")
     ax2.set_ylabel("chunks indexed")
     ax2.set_ylim(bottom=0)
-    ax.set_title(f"vetosh indexer — {args.size} corpus ({docs_count} docs, streaming)")
+    ax.set_title(f"serviette indexer — {args.size} corpus ({docs_count} docs, streaming)")
     lines, labels = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax.legend(lines + lines2, labels + labels2, loc="center right")

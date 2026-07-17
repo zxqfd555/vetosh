@@ -21,15 +21,15 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import ALPHA, run_backend_scenario
-from vetosh.config.schema import MongoDbConfig
-from vetosh.server.accessors.mongodb import MongoDbAccessor
-from vetosh.testing import fake_embedding
+from serviette.config.schema import MongoDbConfig
+from serviette.server.accessors.mongodb import MongoDbAccessor
+from serviette.testing import fake_embedding
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 IMAGE = "mongodb/mongodb-atlas-local:latest"
-DATABASE = "vetosh"
-COLLECTION = "vetosh_embeddings"
+DATABASE = "serviette"
+COLLECTION = "serviette_embeddings"
 VECTOR_INDEX = "vector_index"
 
 

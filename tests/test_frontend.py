@@ -6,8 +6,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from vetosh.config.schema import FrontendConfig, VetoshConfig
-from vetosh.frontend.main import create_app
+from serviette.config.schema import FrontendConfig, ServietteConfig
+from serviette.frontend.main import create_app
 
 
 def _mock_upstream(handler) -> httpx.AsyncClient:
@@ -18,8 +18,8 @@ def _mock_upstream(handler) -> httpx.AsyncClient:
     )
 
 
-def _config(**kw) -> VetoshConfig:
-    return VetoshConfig(frontend=FrontendConfig(title="MyBot", **kw))
+def _config(**kw) -> ServietteConfig:
+    return ServietteConfig(frontend=FrontendConfig(title="MyBot", **kw))
 
 
 def test_serves_chat_page():
@@ -87,4 +87,4 @@ def test_proxy_handles_unreachable_api():
 
 def test_requires_frontend_section():
     with pytest.raises(ValueError, match="frontend"):
-        create_app(VetoshConfig())
+        create_app(ServietteConfig())

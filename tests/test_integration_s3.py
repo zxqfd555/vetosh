@@ -23,14 +23,14 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import ALPHA, BETA, run_indexer, write_config
-from vetosh.config.schema import DuckDbConfig
-from vetosh.server.accessors.duckdb import DuckDbAccessor
-from vetosh.testing import fake_embedding
+from serviette.config.schema import DuckDbConfig
+from serviette.server.accessors.duckdb import DuckDbAccessor
+from serviette.testing import fake_embedding
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 IMAGE = "minio/minio:latest"
-BUCKET = "vetosh-docs"
+BUCKET = "serviette-docs"
 ACCESS_KEY = "minioadmin"
 SECRET_KEY = "minioadmin"
 
@@ -89,7 +89,7 @@ def test_s3_source_scenario(minio_port, tmp_path):
     cfg = write_config(
         tmp_path,
         tmp_path,  # docs dir unused; the source section is overridden below
-        {"type": "duckdb", "path": str(store), "table": "vetosh_embeddings"},
+        {"type": "duckdb", "path": str(store), "table": "serviette_embeddings"},
     )
     import yaml
 
@@ -114,7 +114,7 @@ def test_s3_source_scenario(minio_port, tmp_path):
 
         async def go():
             accessor = DuckDbAccessor(
-                DuckDbConfig(path=str(store), table="vetosh_embeddings")
+                DuckDbConfig(path=str(store), table="serviette_embeddings")
             )
             try:
                 return await accessor.retrieve(fake_embedding(text), k)

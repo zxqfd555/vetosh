@@ -1,6 +1,6 @@
 # Real-time data indexing benchmark
 
-Measures the two claims that matter for the vetosh indexer:
+Measures the two claims that matter for the serviette indexer:
 
 1. **Indexing speed** — wall-clock time to index a document collection end to
    end (parse → chunk → embed → write to the vector DB).
@@ -21,9 +21,9 @@ Three containers via docker-compose:
   incrementally on upsert (fast indexing), it is designed for concurrent
   search-while-writing, and the Pathway sink keys points internally (no user
   primary key), so writes parallelize across Pathway workers.
-- **indexer** — `vetosh indexer` over the dataset (static mode: the run ends
+- **indexer** — `serviette indexer` over the dataset (static mode: the run ends
   when the collection is fully indexed, so wall-clock = indexing time).
-- **server** — `vetosh server`; used after indexing to replay the accuracy
+- **server** — `serviette server`; used after indexing to replay the accuracy
   questions through `/api/v1/retrieve`.
 
 Memory is sampled from `/proc/1/status` inside the indexer container every

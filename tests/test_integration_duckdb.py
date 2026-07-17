@@ -10,12 +10,12 @@ from __future__ import annotations
 import pytest
 
 from tests.integration_common import run_backend_scenario
-from vetosh.config.schema import DuckDbConfig
-from vetosh.server.accessors.duckdb import DuckDbAccessor
+from serviette.config.schema import DuckDbConfig
+from serviette.server.accessors.duckdb import DuckDbAccessor
 
 pytestmark = pytest.mark.slow
 
-TABLE = "vetosh_embeddings"
+TABLE = "serviette_embeddings"
 
 
 def test_duckdb_scenario(tmp_path):

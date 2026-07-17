@@ -1,7 +1,7 @@
 """CI smoke test for the demo path: quickstart -> up -> retrieve -> live add.
 
 Drives the exact sequence a presenter runs: the wizard generates a config
-(DuckDB minimal happy path), ``vetosh up`` supervises indexer + server, the
+(DuckDB minimal happy path), ``serviette up`` supervises indexer + server, the
 chat page and retrieval answer, and a file added while everything runs shows
 up in results within seconds (streaming + DuckDB lock detach).
 
@@ -23,7 +23,7 @@ import httpx
 import pytest
 import yaml
 
-from vetosh.quickstart.wizard import ScriptedPrompter, Wizard, build_config, dump_yaml
+from serviette.quickstart.wizard import ScriptedPrompter, Wizard, build_config, dump_yaml
 
 pytestmark = pytest.mark.slow
 
@@ -79,7 +79,7 @@ def test_demo_path_smoke(tmp_path, tcp_port, monkeypatch):
 
     # -- 2. one command up -----------------------------------------------------
     proc = subprocess.Popen(
-        [sys.executable, "-m", "vetosh.cli", "up", "--config", str(cfg_path)],
+        [sys.executable, "-m", "serviette.cli", "up", "--config", str(cfg_path)],
         cwd=tmp_path,
         env=dict(os.environ, PYTHONPATH=f"{REPO_ROOT}{os.pathsep}" + os.environ.get("PYTHONPATH", "")),
     )

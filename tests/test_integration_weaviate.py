@@ -1,7 +1,7 @@
 """Integration test: real indexer -> Weaviate (Docker) -> Weaviate accessor.
 
 The collection must pre-exist; created here with no server-side vectorizer
-(vetosh supplies vectors) and explicit TEXT properties matching the sink's
+(serviette supplies vectors) and explicit TEXT properties matching the sink's
 columns. Skips when Docker or ``weaviate-client`` is unavailable.
 """
 
@@ -18,13 +18,13 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import run_backend_scenario
-from vetosh.config.schema import WeaviateConfig
-from vetosh.server.accessors.weaviate import WeaviateAccessor
+from serviette.config.schema import WeaviateConfig
+from serviette.server.accessors.weaviate import WeaviateAccessor
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 IMAGE = "cr.weaviate.io/semitechnologies/weaviate:1.28.2"
-COLLECTION = "VetoshEmbeddings"
+COLLECTION = "ServietteEmbeddings"
 
 
 def _ready(http_port: int, grpc_port: int) -> bool:

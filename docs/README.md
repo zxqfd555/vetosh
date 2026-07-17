@@ -1,18 +1,18 @@
-# vetosh
+# serviette
 
 **A universal, no-code, always up-to-date RAG server for any vector database
 — powered by the [Pathway](https://pathway.com) Live Data Framework.**
 
-vetosh stands up Retrieval-Augmented Generation over your own documents —
+serviette stands up Retrieval-Augmented Generation over your own documents —
 text, Office files, PDFs, scans, and (with API keys) audio and video —
 without writing code. Point it at a folder, choose a vector database and an
 embedder in a YAML file (or generate one with the wizard), and run one
-command (`vetosh up`) or the two components separately:
+command (`serviette up`) or the two components separately:
 
-- **`vetosh indexer`** — a Pathway streaming pipeline that watches your files,
+- **`serviette indexer`** — a Pathway streaming pipeline that watches your files,
   parses and chunks them, embeds the chunks and keeps your vector DB in sync
   (additions, modifications and deletions) in real time.
-- **`vetosh server`** — a FastAPI service that embeds incoming queries and
+- **`serviette server`** — a FastAPI service that embeds incoming queries and
   retrieves the most relevant chunks (and, optionally, answers them with an
   LLM). It also serves the web chat UI on `/` (same port, same origin) unless
   `server.serve_frontend` is disabled; the REST API lives under `/api/v1`.
@@ -24,9 +24,9 @@ database, so you can scale them independently.
 
 ## 1. Installation
 
-vetosh requires **Python ≥ 3.10** (the minimum supported by Pathway).
+serviette requires **Python ≥ 3.10** (the minimum supported by Pathway).
 
-Until a released Pathway ships the vector-store connectors, vetosh installs
+Until a released Pathway ships the vector-store connectors, serviette installs
 against a prebuilt Pathway development wheel (see the README's
 [Development](../README.md#development) section for the full walkthrough):
 
@@ -41,7 +41,7 @@ Optional extras: `openai` (OpenAI embedders / `/rag`), `local`
 `ocr` (scanned images), `pyfilesystem` (FTP/SFTP/WebDAV/ZIP sources),
 `gdrive`, `sharepoint`, plus one extra per vector-DB client (`qdrant`,
 `pgvector`, …, or `all`). Once Pathway publishes a release, this section
-collapses to `pip install "vetosh[...]"`.
+collapses to `pip install "serviette[...]"`.
 
 ---
 
@@ -50,7 +50,7 @@ collapses to `pip install "vetosh[...]"`.
 The fastest way to get a valid config is the interactive wizard:
 
 ```bash
-vetosh quickstart
+serviette quickstart
 ```
 
 It asks only what it must (the DuckDB + local-embeddings happy path is seven
@@ -64,17 +64,17 @@ Then run the two components (in separate terminals or on separate machines):
 
 ```bash
 # One command: indexer + server supervised together (dev/demo convenience)
-vetosh up --config config.yaml         # open http://localhost:8989
+serviette up --config config.yaml         # open http://localhost:8989
 
 # ... or run the components separately (how production deploys them):
 # 1. Index your documents into the vector DB and keep it live
-vetosh indexer --config config.yaml
+serviette indexer --config config.yaml
 
 # 2. Serve the chat UI + retrieval / RAG API on one port
-vetosh server --config config.yaml     # open http://localhost:8989
+serviette server --config config.yaml     # open http://localhost:8989
 
 # (optional, split deployments only) standalone UI tier on another host
-vetosh frontend --config config.yaml   # open http://localhost:3000
+serviette frontend --config config.yaml   # open http://localhost:3000
 ```
 
 Query the API (versioned under `/api/v1`; the pre-versioning `/retrieve`,
@@ -161,34 +161,34 @@ hardcoded.
 | **sharepoint** `sources[].root_path` | str | — (required) | indexer | Directory/file to index. |
 | **sharepoint** `sources[].recursive` | bool | `true` | indexer | Scan nested directories. |
 | **sharepoint** `sources[].refresh_interval` | int | `30` | indexer | Polling period, seconds. |
-| **pyfilesystem** `sources[].fs_url` | str | — (required) | indexer | Any PyFilesystem URL: `ftp://…`, `ssh://…`, `webdav://…`, `zip://…`, `osfs://…` (extra: `vetosh[pyfilesystem]`; some protocols need a driver package). |
+| **pyfilesystem** `sources[].fs_url` | str | — (required) | indexer | Any PyFilesystem URL: `ftp://…`, `ssh://…`, `webdav://…`, `zip://…`, `osfs://…` (extra: `serviette[pyfilesystem]`; some protocols need a driver package). |
 | **pyfilesystem** `sources[].path` | str | `""` | indexer | Path inside the opened filesystem (recursive). |
 | **pyfilesystem** `sources[].refresh_interval` | float | `30.0` | indexer | Seconds between scans (streaming mode). |
 | `parser` | list of rules | keyless-first defaults | indexer | Routing rules `{match: ["*.pdf"], type: docling, options: {...}}`, first match wins; unmatched files use built-in defaults (text→utf8, pdf→docling/pypdf, office→unstructured, images→paddle_ocr, audio→whisper if `OPENAI_API_KEY`, video→twelvelabs_video if `TWELVELABS_API_KEY`, else skip+warn). Types: `utf8`, `pypdf`, `docling`, `unstructured`, `paddle_ocr`, `vision_image`, `vision_slide`, `whisper`, `twelvelabs_video`, `skip`. Changing routing is fingerprint-guarded. |
 | `vector_db.type` | `duckdb`\|`pgvector`\|`milvus`\|`qdrant`\|`chroma`\|`weaviate`\|`pinecone`\|`mongodb` | — (required) | both | Vector database backend (see [Backends](#vector-database-backends)). |
 | **duckdb** `vector_db.path` | str | — (required) | both | Path to the DuckDB database file. |
-| **duckdb** `vector_db.table` | str | `vetosh_embeddings` | both | Target table. |
+| **duckdb** `vector_db.table` | str | `serviette_embeddings` | both | Target table. |
 | **pgvector** `vector_db.connection_string` | str | — (required) | both | `postgresql://user:pass@host/db`. |
-| **pgvector** `vector_db.table` | str | `vetosh_embeddings` | both | Target table. |
+| **pgvector** `vector_db.table` | str | `serviette_embeddings` | both | Target table. |
 | **milvus** `vector_db.uri` | str | — | both | Milvus URI, e.g. `http://localhost:19530`. |
 | **milvus** `vector_db.host` / `.port` | str / int | `localhost` / `19530` | both | Used if `uri` is omitted. |
-| **milvus** `vector_db.collection` | str | `vetosh_embeddings` | both | Milvus collection. |
+| **milvus** `vector_db.collection` | str | `serviette_embeddings` | both | Milvus collection. |
 | **qdrant** `vector_db.host` | str | `localhost` | both | Qdrant host. |
 | **qdrant** `vector_db.rest_port` / `.grpc_port` | int | `6333` / `6334` | server / indexer | REST (server) and gRPC (indexer) ports. |
 | **qdrant** `vector_db.api_key` | str | — | both | Qdrant Cloud API key. |
-| **qdrant** `vector_db.collection` | str | `vetosh_embeddings` | both | Auto-created (cosine) if missing. |
+| **qdrant** `vector_db.collection` | str | `serviette_embeddings` | both | Auto-created (cosine) if missing. |
 | **chroma** `vector_db.host` / `.port` | str / int | `localhost` / `8000` | both | Chroma server address. |
 | **chroma** `vector_db.tenant` / `.database` | str | Chroma defaults | both | Multi-tenant selectors. |
-| **chroma** `vector_db.collection` | str | `vetosh_embeddings` | both | Auto-created (cosine `hnsw:space`). |
+| **chroma** `vector_db.collection` | str | `serviette_embeddings` | both | Auto-created (cosine `hnsw:space`). |
 | **weaviate** `vector_db.http_host` / `.http_port` | str / int | `localhost` / `8080` | both | HTTP endpoint. |
 | **weaviate** `vector_db.grpc_host` / `.grpc_port` | str / int | http_host / `50051` | server | gRPC endpoint (v4 client). |
 | **weaviate** `vector_db.api_key` | str | — | both | API key. |
-| **weaviate** `vector_db.collection` | str | `VetoshEmbeddings` | both | Auto-created (capitalized name). |
+| **weaviate** `vector_db.collection` | str | `ServietteEmbeddings` | both | Auto-created (capitalized name). |
 | **pinecone** `vector_db.index_name` | str | — (required) | both | Auto-created (serverless, embedder's dimension, cosine). |
 | **pinecone** `vector_db.api_key` | str | `${PINECONE_API_KEY}` | both | Pinecone API key. |
 | **pinecone** `vector_db.namespace` | str | `""` | both | Optional namespace. |
 | **mongodb** `vector_db.connection_string` | str | — (required) | both | `mongodb+srv://...` for Atlas. |
-| **mongodb** `vector_db.database` / `.collection` | str | — / `vetosh_embeddings` | both | Target collection (auto-created). |
+| **mongodb** `vector_db.database` / `.collection` | str | — / `serviette_embeddings` | both | Target collection (auto-created). |
 | **mongodb** `vector_db.vector_index` | str | `vector_index` | server | Atlas `vectorSearch` index name. |
 | `embedder.type` | str | `openai` | both | Embedder family (see below). |
 | `embedder.model` | str | provider default | both | Model name. |
@@ -202,24 +202,24 @@ hardcoded.
 | `persistence.path` | str | `./persistence` | indexer | Persistence directory (also hosts the parse cache under `runtime_calls/`). Silent default — the wizard does not ask. |
 | `server.host` / `server.port` | str / int | `127.0.0.1` / `8989` | server | Bind address. Loopback by default; set `0.0.0.0` explicitly to listen on all interfaces (containers, remote access) — see [Security](#security--exposing-the-server). |
 | `server.serve_frontend` | bool | `true` | server | Serve the chat UI on `/` from the same port (API stays under `/api/v1`). |
-| `server.cors_origins` | list[str] | `[]` (disabled) | server | Opt-in CORS allowlist for third-party browser frontends calling the API directly from another origin. vetosh's own UIs never need it. Prefer exact origins over `*`. |
+| `server.cors_origins` | list[str] | `[]` (disabled) | server | Opt-in CORS allowlist for third-party browser frontends calling the API directly from another origin. serviette's own UIs never need it. Prefer exact origins over `*`. |
 | `llm.type` | str | `openai` | server | LLM for `/rag` (omit to disable `/rag`). |
 | `llm.model` | str | `gpt-4o-mini` | server | Chat model. |
 | `llm.api_key` | str | — | server | API key (or `${ENV}`). |
 | `frontend.host` / `frontend.port` | str / int | `127.0.0.1` / `3000` | frontend (standalone) | Bind address for the split-deployment chat UI. |
 | `frontend.api_url` | str | `http://localhost:8989` | frontend (standalone) | Base URL of the API the standalone frontend proxies to — point it at the backend host in split deployments (frontend fleet / backend fleet). The address never reaches the browser. |
-| `frontend.title` | str | `vetosh` | both | Title shown in the chat UI (embedded and standalone). |
+| `frontend.title` | str | `serviette` | both | Title shown in the chat UI (embedded and standalone). |
 
 **Supported embedders** (from `pathway.xpacks.llm.embedders`): `openai`,
 `litellm` (≈100 providers), `sentence_transformer` (fully local, no
-credentials — install `vetosh[local]`), `gemini`, `bedrock`. Every family has a
+credentials — install `serviette[local]`), `gemini`, `bedrock`. Every family has a
 matching async client on the server side, so one `embedder` section serves both
 components; make sure the indexer and server use the **same** model so vectors
 are comparable.
 
 ### Sources
 
-vetosh only supports sources that offer Pathway's **`only_metadata`** read mode —
+serviette only supports sources that offer Pathway's **`only_metadata`** read mode —
 the graph holds just paths/identifiers and metadata (never the file bytes), and
 the bytes are fetched on demand during parsing. That keeps the memory footprint
 tiny (1 GB of PDFs stays a few KB in the pipeline). Today that means:
@@ -229,7 +229,7 @@ tiny (1 GB of PDFs stays a few KB in the pipeline). Today that means:
   account**, download its JSON key, share the target folder with the service
   account's email, and point `service_user_credentials_file` at the key. See the
   [Pathway Google Drive connector guide](https://pathway.com/developers/user-guide/connect/connectors/gdrive-connector/).
-  Install the extra: `pip install "vetosh[gdrive]"`.
+  Install the extra: `pip install "serviette[gdrive]"`.
 - **`s3`** — an S3 bucket or key prefix, including S3-compatible stores
   (MinIO, DigitalOcean, Wasabi) via `endpoint` + `with_path_style: true`.
   Credentials fall back to the standard AWS chain when omitted. No extra
@@ -237,13 +237,13 @@ tiny (1 GB of PDFs stays a few KB in the pipeline). Today that means:
 - **`sharepoint`** — a SharePoint directory or file, authenticated with an
   app-registration certificate (`tenant`, `client_id`, `cert_path`,
   `thumbprint`). Requires a Pathway **Scale** license and
-  `pip install "vetosh[sharepoint]"`.
+  `pip install "serviette[sharepoint]"`.
 
 - **`pyfilesystem`** — anything the
   [PyFilesystem2](https://docs.pyfilesystem.org) library opens: FTP, SFTP,
   WebDAV, even ZIP/TAR archives — selected by `fs_url` (e.g.
   `ftp://user:pass@host/dir`, `zip://./docs.zip`). Install
-  `pip install "vetosh[pyfilesystem]"`; some protocols need their own driver
+  `pip install "serviette[pyfilesystem]"`; some protocols need their own driver
   package (`fs.sshfs`, `fs.webdavfs`).
 
 You can list several sources of mixed types in one config.
@@ -271,7 +271,7 @@ DBA manages the database — not as required manual steps.
 vector_db:
   type: duckdb
   path: ./embeddings.duckdb
-  table: vetosh_embeddings
+  table: serviette_embeddings
 ```
 
 No external service and no setup: the file and table are created automatically
@@ -280,11 +280,11 @@ columns and queried **inside DuckDB** with `list_cosine_similarity` — a
 vectorized, columnar scan that answers in milliseconds for local corpora.
 
 Concurrency: DuckDB allows one read-write process *or* several read-only
-processes per file — never both. vetosh resolves this with Pathway's
+processes per file — never both. serviette resolves this with Pathway's
 `detach_between_batches`: the streaming indexer releases the file lock
 between minibatches, and the server's short-lived read-only connections (with
 a retry through brief lock windows) query it concurrently — live indexing and
-serving work on one file. On older Pathway builds without the flag, vetosh
+serving work on one file. On older Pathway builds without the flag, serviette
 warns and falls back to the hold-the-lock behavior (use `mode: static`
 there).
 
@@ -295,7 +295,7 @@ Auto-created (extension, table, HNSW index). Reference schema, e.g. for
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
-CREATE TABLE vetosh_embeddings (
+CREATE TABLE serviette_embeddings (
   chunk_id  text PRIMARY KEY,
   text      text,
   metadata  jsonb,
@@ -326,7 +326,7 @@ stored as the Chroma document and the source metadata as a JSON string
 
 #### Weaviate
 
-Auto-created (capitalized name, e.g. `VetoshEmbeddings`; vectorizer `none`).
+Auto-created (capitalized name, e.g. `ServietteEmbeddings`; vectorizer `none`).
 The chunk vector is stored as the object vector; `text` / `metadata` (JSON
 string) / `chunk_id` become properties. The server's v4 client needs both the
 HTTP and gRPC ports.
@@ -373,18 +373,18 @@ it only forgoes the cross-restart diffing and caching.
 
 ## 6. Parsing & modalities
 
-vetosh never implements its own parsers — each file is routed by extension to
+serviette never implements its own parsers — each file is routed by extension to
 a `pathway.xpacks.llm.parsers` parser. Every format is enabled by default,
 preferring parsers that need **no API key**, and modalities whose only parser
 requires an absent key are skipped with a single clear warning (never a
 crash):
 
 - text / Markdown → as-is;
-- `.pdf` → `DoclingParser` (layout-aware, tables — `vetosh[docling]`), falling
+- `.pdf` → `DoclingParser` (layout-aware, tables — `serviette[docling]`), falling
   back to `PypdfParser`;
 - Office & co. (DOCX, PPTX, XLSX, HTML, EML, CSV, RTF, EPUB, …) →
   `UnstructuredParser`;
-- scanned images (PNG, JPG, TIFF, …) → `PaddleOCRParser` (`vetosh[ocr]`);
+- scanned images (PNG, JPG, TIFF, …) → `PaddleOCRParser` (`serviette[ocr]`);
 - audio (MP3, WAV, …) → Whisper, enabled when `OPENAI_API_KEY` is set;
 - video (MP4, WebM, MOV, …) → TwelveLabs Pegasus (a searchable text
   description), enabled when `TWELVELABS_API_KEY` is set.
@@ -405,7 +405,7 @@ version cannot handle. Unsupported files are skipped and produce no chunks.
 ## 7. Architecture
 
 <p align="center">
-  <img src="assets/architecture.svg" alt="vetosh architecture: sources feed the Pathway indexer, which writes through Pathway's native connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
+  <img src="assets/architecture.svg" alt="serviette architecture: sources feed the Pathway indexer, which writes through Pathway's native connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
 </p>
 
 Inside the indexer, documents move through a Pathway dataflow — every stage
@@ -439,7 +439,7 @@ database**:
   instance also serves the chat UI (static, zero overhead), so the UI scales
   with the API for free.
 - **Frontend (optional split tier).** When the UI must live on a different
-  host than the API, `vetosh frontend` is a separate, stateless web tier that
+  host than the API, `serviette frontend` is a separate, stateless web tier that
   serves the same chat page and proxies to the API at `frontend.api_url`
   server-side (the API address never reaches the browser).
 - **Indexer.** Runs as its own long-lived process and shards across worker
@@ -460,7 +460,7 @@ latency gauges, per-operator row counters) and `GET /status`.
 
 ## Security & exposing the server
 
-The API server binds to **127.0.0.1 by default**: on a laptop, `vetosh up`
+The API server binds to **127.0.0.1 by default**: on a laptop, `serviette up`
 serves only you. It deliberately ships **no built-in authentication** —
 that is a perimeter concern, and a reverse proxy does it better than any
 hand-rolled API key (TLS, key rotation, SSO, rate limits, audit logs come
@@ -492,11 +492,11 @@ To serve beyond localhost:
    }
    ```
 
-   With this in place vetosh itself can stay on 127.0.0.1 — only the proxy
+   With this in place serviette itself can stay on 127.0.0.1 — only the proxy
    is exposed. Any equivalent (nginx + auth_basic, oauth2-proxy, Cloudflare
    Access, a VPN like Tailscale) works the same way.
 
-**CORS** is deliberately not emitted by default: vetosh's own UIs never
+**CORS** is deliberately not emitted by default: serviette's own UIs never
 need it (the embedded chat is same-origin; the standalone frontend proxies
 server-side, so `frontend.api_url` may point at a backend on another host —
 or another fleet — without any browser-visible cross-origin traffic), and

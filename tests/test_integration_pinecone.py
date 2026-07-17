@@ -22,13 +22,13 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import run_backend_scenario
-from vetosh.config.schema import PineconeConfig
-from vetosh.server.accessors.pinecone import PineconeAccessor
+from serviette.config.schema import PineconeConfig
+from serviette.server.accessors.pinecone import PineconeAccessor
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 IMAGE = "ghcr.io/pinecone-io/pinecone-local:latest"
-INDEX = "vetosh"
+INDEX = "serviette"
 API_KEY = "pclocal"  # Pinecone Local accepts any non-empty key
 PORT_SPAN = 6  # control plane + a few index data planes
 

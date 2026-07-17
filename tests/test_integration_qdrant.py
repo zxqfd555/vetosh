@@ -18,13 +18,13 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import run_backend_scenario
-from vetosh.config.schema import QdrantConfig
-from vetosh.server.accessors.qdrant import QdrantAccessor
+from serviette.config.schema import QdrantConfig
+from serviette.server.accessors.qdrant import QdrantAccessor
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 IMAGE = "qdrant/qdrant:latest"
-COLLECTION = "vetosh_embeddings"
+COLLECTION = "serviette_embeddings"
 
 
 @pytest.fixture

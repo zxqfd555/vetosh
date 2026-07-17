@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from vetosh.config.schema import FsSource, GDriveSource, S3Source, SharePointSource, VetoshConfig
-from vetosh.indexer.sources import (
+from serviette.config.schema import FsSource, GDriveSource, S3Source, SharePointSource, ServietteConfig
+from serviette.indexer.sources import (
     FsFetcher,
     GDriveFetcher,
     S3Fetcher,
@@ -28,7 +28,7 @@ def test_gdrive_source_validates():
 
 
 def test_mixed_sources_discriminated():
-    config = VetoshConfig.model_validate(
+    config = ServietteConfig.model_validate(
         {
             "sources": [
                 {"type": "fs", "path": "/data/docs", "glob": "**/*"},
@@ -170,7 +170,7 @@ def test_monitoring_http_port_config():
     import pytest
     from pydantic import ValidationError
 
-    from vetosh.config.schema import IndexerConfig
+    from serviette.config.schema import IndexerConfig
 
     assert IndexerConfig().monitoring_http_port is None
     assert IndexerConfig(monitoring_http_port=20500).monitoring_http_port == 20500
@@ -181,12 +181,12 @@ def test_monitoring_http_port_config():
 
 
 def test_pyfilesystem_source_validates():
-    from vetosh.config.schema import PyFilesystemSource
+    from serviette.config.schema import PyFilesystemSource
 
     src = PyFilesystemSource(fs_url="ftp://user:pw@host/dir")
     assert src.path == "" and src.mode == "streaming"
     assert src.refresh_interval == 30 and src.max_backlog_size == 1000
-    config = VetoshConfig.model_validate(
+    config = ServietteConfig.model_validate(
         {
             "sources": [{"type": "pyfilesystem", "fs_url": "zip://docs.zip", "path": "a"}],
             "vector_db": {"type": "duckdb", "path": "x.duckdb"},
@@ -200,8 +200,8 @@ def test_pyfilesystem_fetcher_reads_bytes_and_suffix():
     # The pyfilesystem source is an optional extra; the test mirrors that.
     pyfs = pytest.importorskip("fs")
 
-    from vetosh.config.schema import PyFilesystemSource
-    from vetosh.indexer.sources import PyFilesystemFetcher, make_fetcher
+    from serviette.config.schema import PyFilesystemSource
+    from serviette.indexer.sources import PyFilesystemFetcher, make_fetcher
 
     mem = pyfs.open_fs("mem://")
     mem.makedirs("docs")
@@ -217,7 +217,7 @@ def test_pyfilesystem_fetcher_reads_bytes_and_suffix():
 
 def _registry(rules=None, env=None, importable=frozenset(), monkeypatch=None):
     """ParserRegistry with a controlled environment for routing tests."""
-    import vetosh.indexer.graph as graph_mod
+    import serviette.indexer.graph as graph_mod
 
     registry = graph_mod.ParserRegistry(rules)
     registry._importable = staticmethod(lambda module: module in importable)  # type: ignore[method-assign]
@@ -253,7 +253,7 @@ def test_parser_defaults_enable_keyed_modalities_with_keys(monkeypatch):
 
 
 def test_parser_user_rules_win_and_fall_through(monkeypatch):
-    from vetosh.config.schema import ParserRule
+    from serviette.config.schema import ParserRule
 
     monkeypatch.delenv("TWELVELABS_API_KEY", raising=False)
     rules = [
@@ -280,11 +280,11 @@ def test_parser_skip_produces_empty_text(monkeypatch, caplog):
 
 
 def test_parser_rules_in_fingerprint_without_credentials(monkeypatch):
-    from vetosh.indexer.fingerprint import build_fingerprint
+    from serviette.indexer.fingerprint import build_fingerprint
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("TWELVELABS_API_KEY", raising=False)
-    config = VetoshConfig.model_validate(
+    config = ServietteConfig.model_validate(
         {
             "sources": [{"type": "fs", "path": "./docs"}],
             "vector_db": {"type": "duckdb", "path": "x.duckdb"},
@@ -310,11 +310,11 @@ def test_pyfilesystem_source_without_extra_fails_helpfully(monkeypatch):
 
     import pytest as _pytest
 
-    from vetosh.config.schema import PyFilesystemSource
-    from vetosh.indexer.sources import read_source
+    from serviette.config.schema import PyFilesystemSource
+    from serviette.indexer.sources import read_source
 
     monkeypatch.setitem(sys.modules, "fs", None)  # simulates the missing extra
     src = PyFilesystemSource(fs_url="mem://")
     with _pytest.raises(SystemExit) as exc:
         read_source(src, name="s")
-    assert "vetosh[pyfilesystem]" in str(exc.value)
+    assert "serviette[pyfilesystem]" in str(exc.value)

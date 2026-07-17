@@ -4,9 +4,12 @@
 #
 # Pathway is installed from the internal dev package index (prebuilt wheels;
 # no released Pathway ships the connectors serviette needs yet). uv is required:
-# pip's resolver times out against the dev index. --prerelease=allow is
-# REQUIRED too — the index carries .dev builds only, and without the flag the
-# resolver silently falls back to the released PyPI pathway.
+# pip's resolver times out against the dev index. --prerelease=if-necessary-or-explicit
+# is REQUIRED too — the dev index carries .dev builds only, and without the flag
+# the resolver silently falls back to the released PyPI pathway. Do NOT widen it
+# to --prerelease=allow: that resolves *every* package to pre-releases, and a
+# duckdb dev build once created store files in the unreleased storage format 999
+# that the engine's bundled DuckDB cannot read.
 # NOTE for the pre-publication checklist: remove the internal index URL when
 # serviette can depend on a released Pathway.
 
@@ -50,7 +53,7 @@ jobs:
           # dependency: it keeps the optional-source tests exercised instead
           # of being skipped (they importorskip when the extra is absent).
           uv pip install --python .venv/bin/python -e ".[dev,local,pyfilesystem]" \
-            --prerelease=allow --extra-index-url "$PATHWAY_DEV_INDEX"
+            --prerelease=if-necessary-or-explicit --extra-index-url "$PATHWAY_DEV_INDEX"
           .venv/bin/python -c "import pathway; v = pathway.__version__; assert 'dev' in v, v; print('pathway', v)"
       - name: Ruff
         run: .venv/bin/python -m ruff check serviette tests
@@ -88,7 +91,7 @@ jobs:
           pip install -U uv
           uv venv .venv
           uv pip install --python .venv/bin/python -e ".[dev,local,pyfilesystem]" \
-            --prerelease=allow --extra-index-url "$PATHWAY_DEV_INDEX"
+            --prerelease=if-necessary-or-explicit --extra-index-url "$PATHWAY_DEV_INDEX"
       - name: Slow tests (multimodal parser tests excluded — they download models)
         if: steps.license.outputs.present == 'true'
         env:
@@ -128,7 +131,7 @@ jobs:
           pip install -U uv
           uv venv .venv
           uv pip install --python .venv/bin/python -e ".[dev,all,local,pyfilesystem,sharepoint]" \
-            --prerelease=allow --extra-index-url "$PATHWAY_DEV_INDEX"
+            --prerelease=if-necessary-or-explicit --extra-index-url "$PATHWAY_DEV_INDEX"
       - name: Integration tests
         if: steps.license.outputs.present == 'true'
         env:

@@ -282,16 +282,29 @@ def _prepare_duckdb(config: ServietteConfig) -> None:
     queryable from second one. The DDL mirrors the writer exactly — same
     columns, and PRIMARY KEY(chunk_id) that snapshot-mode upserts require —
     so the writer's CREATE IF NOT EXISTS + preflight accept it as-is.
+
+    The file is pinned to storage format v1.0.0: the engine bundles its own
+    DuckDB, which reads a bounded range of storage versions, while the Python
+    package creating this file upgrades independently (its dev builds write
+    the unreleased format 999 that no stable reader accepts). The pin keeps
+    the file readable by both sides regardless of that drift.
     """
 
     import duckdb
 
     vdb = config.vector_db
     Path(vdb.path).parent.mkdir(parents=True, exist_ok=True)
-    conn = duckdb.connect(vdb.path)
+    conn = duckdb.connect()
     try:
+        target = str(vdb.path).replace("'", "''")
+        try:
+            conn.execute(f"ATTACH '{target}' AS store (STORAGE_VERSION 'v1.0.0')")
+        except duckdb.Error:
+            # duckdb < 1.2 lacks the STORAGE_VERSION option; those builds
+            # write the v1.0.0 format natively, so a plain attach is the same.
+            conn.execute(f"ATTACH '{target}' AS store")
         conn.execute(
-            f'CREATE TABLE IF NOT EXISTS "{vdb.table}" ('
+            f'CREATE TABLE IF NOT EXISTS store."{vdb.table}" ('
             f'"chunk_id" VARCHAR PRIMARY KEY, "text" VARCHAR, '
             f'"metadata" VARCHAR, "embedding" DOUBLE[])'
         )

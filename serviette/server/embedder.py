@@ -54,7 +54,7 @@ class OpenAIAsyncEmbedder:
         self._model = config.model or "text-embedding-3-small"
         self._api_key = config.api_key
         # Forward any extra keys (e.g. base_url) declared on the config.
-        extra = config.model_dump(exclude={"type", "model", "api_key"})
+        extra = config.model_dump(exclude={"type", "model", "api_key", "query_prefix", "document_prefix", "capacity", "retries"})
         self._client_kwargs = {k: v for k, v in extra.items() if v is not None}
         self._client = None
 
@@ -96,7 +96,7 @@ class SentenceTransformerAsyncEmbedder:
         # Forward extra config keys (device, truncate_dim, ...) to the
         # SentenceTransformer constructor — mirrors the indexer's xpack
         # embedder, so e.g. Matryoshka truncation stays consistent.
-        extra = config.model_dump(exclude={"type", "model", "api_key", "batch_size"})
+        extra = config.model_dump(exclude={"type", "model", "api_key", "batch_size", "query_prefix", "document_prefix", "capacity", "retries"})
         self._model_kwargs = {k: v for k, v in extra.items() if v is not None}
         self._model_kwargs.setdefault("device", "cpu")
         self._model = None
@@ -164,7 +164,7 @@ class BedrockAsyncEmbedder:
     _DEFAULT_MODEL = "amazon.titan-embed-text-v2:0"
 
     def __init__(self, config) -> None:
-        extra = config.model_dump(exclude={"type", "model", "api_key"})
+        extra = config.model_dump(exclude={"type", "model", "api_key", "query_prefix", "document_prefix", "capacity", "retries"})
         self._model_id = extra.pop("model_id", None) or config.model or self._DEFAULT_MODEL
         self._client_kwargs = {k: v for k, v in extra.items() if v is not None}
         self._client = None

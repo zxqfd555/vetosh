@@ -15,7 +15,20 @@ from serviette.server.accessors.abstract import AsyncVectorAccessor
 
 
 class PineconeAccessor(AsyncVectorAccessor):
+    # MMR works (queries can return vectors); in-process BM25 hybrid does not —
+    # Pinecone has no scan-all-vectors API to build the keyword corpus from.
+    supports_embeddings = True
+
     def __init__(self, config) -> None:
+        if getattr(config, "hybrid", False):
+            raise ValueError(
+                "hybrid retrieval is not supported on the Pinecone backend: it "
+                "has no API to enumerate all stored vectors, so an in-process "
+                "BM25 corpus cannot be built. Native hybrid needs a separate "
+                "sparse index fed by the indexer (planned — see ROADMAP.md); "
+                "for in-process hybrid today use duckdb, qdrant, pgvector, "
+                "milvus, weaviate, chroma or mongodb."
+            )
         self._config = config
         self._pc = None
         self._index = None
@@ -40,25 +53,39 @@ class PineconeAccessor(AsyncVectorAccessor):
         return self._index
 
     async def retrieve(self, embedding: list[float], k: int) -> list[dict[str, Any]]:
+        return await self.retrieve_ex(embedding, k)
+
+    async def retrieve_ex(
+        self,
+        embedding: list[float],
+        k: int,
+        *,
+        query_text: str | None = None,
+        with_embeddings: bool = False,
+    ) -> list[dict[str, Any]]:
+        # ``query_text`` is accepted for interface parity but unused: Pinecone
+        # rejects hybrid at startup, so this path is always pure-vector.
         index = await self._ensure_index()
         response = await index.query(
             vector=list(map(float, embedding)),
             top_k=k,
             namespace=self._config.namespace,
             include_metadata=True,
+            include_values=with_embeddings,
         )
         results: list[dict[str, Any]] = []
         for match in response.matches:
             meta = dict(match.metadata or {})
             raw = meta.get("metadata")
             metadata = json.loads(raw) if isinstance(raw, str) else (raw or {})
-            results.append(
-                {
-                    "text": meta.get("text", ""),
-                    "metadata": metadata,
-                    "score": float(match.score),
-                }
-            )
+            hit: dict[str, Any] = {
+                "text": meta.get("text", ""),
+                "metadata": metadata,
+                "score": float(match.score),
+            }
+            if with_embeddings and getattr(match, "values", None):
+                hit["embedding"] = [float(x) for x in match.values]
+            results.append(hit)
         return results
 
     async def stats(self) -> dict[str, Any]:

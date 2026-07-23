@@ -53,8 +53,8 @@ def prepare_backend(config: ServietteConfig) -> None:
 
     vdb = config.vector_db
     if vdb.type == "qdrant":
-        return  # the connector creates the collection itself
-    if vdb.type == "duckdb":
+        _prepare_qdrant(config)
+    elif vdb.type == "duckdb":
         _prepare_duckdb(config)
     elif vdb.type == "pgvector":
         _prepare_pgvector(config)
@@ -179,6 +179,45 @@ def _prepare_weaviate(config: ServietteConfig) -> None:
                 ],
             )
             logger.info("weaviate: collection %r created", vdb.collection)
+    finally:
+        client.close()
+
+
+def _prepare_qdrant(config: ServietteConfig) -> None:
+    """Create the Qdrant collection with a single named dense vector slot.
+
+    The schema-driven ``pw.io.qdrant`` sink (Pathway ≥ 0.31.2.dev) no longer
+    auto-creates the collection: it binds each declared vector slot to the
+    same-named table column, so the collection must pre-exist with a dense slot
+    named ``QDRANT_VECTOR_NAME`` (matching the indexer's ``embedding`` column
+    and the server accessor's search slot). The remaining columns (``text``,
+    ``metadata``) land in the point payload.
+    """
+
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, VectorParams
+
+    from serviette.server.accessors.qdrant import QDRANT_VECTOR_NAME
+
+    vdb = config.vector_db
+    client = QdrantClient(url=vdb.rest_url(), api_key=vdb.api_key)
+    try:
+        if not client.collection_exists(vdb.collection):
+            dimension = resolve_embedding_dimension(config)
+            client.create_collection(
+                vdb.collection,
+                vectors_config={
+                    QDRANT_VECTOR_NAME: VectorParams(
+                        size=dimension, distance=Distance.COSINE
+                    )
+                },
+            )
+            logger.info(
+                "qdrant: collection %r created (dimension %d, vector %r)",
+                vdb.collection,
+                dimension,
+                QDRANT_VECTOR_NAME,
+            )
     finally:
         client.close()
 

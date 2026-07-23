@@ -74,6 +74,22 @@ def _retrieve(make_accessor: Callable[[], AsyncVectorAccessor], text: str, k: in
     return asyncio.run(go())
 
 
+def _retrieve_ex(
+    make_accessor: Callable[[], AsyncVectorAccessor],
+    text: str,
+    k: int,
+    **kwargs,
+):
+    async def go():
+        accessor = make_accessor()
+        try:
+            return await accessor.retrieve_ex(fake_embedding(text), k, **kwargs)
+        finally:
+            await accessor.close()
+
+    return asyncio.run(go())
+
+
 def paths_of(results: list[dict[str, Any]]) -> set[str]:
     return {Path(r["metadata"]["path"]).name for r in results if r.get("metadata")}
 
@@ -85,11 +101,19 @@ def run_backend_scenario(
     *,
     after_index: Callable[[], None] | None = None,
     score_abs: float = 1e-4,
+    make_hybrid_accessor: Callable[[], AsyncVectorAccessor] | None = None,
 ) -> None:
     """Run the full index → retrieve → delete → verify scenario.
 
     ``after_index`` runs after each indexing pass — for backends that need a
     post-index step before querying (e.g. MongoDB search-index readiness).
+
+    Every backend is also checked for MMR-readiness — ``retrieve_ex`` with
+    ``with_embeddings=True`` must return the stored vectors. When
+    ``make_hybrid_accessor`` is given (a factory building the accessor with
+    ``hybrid=True``), the in-process BM25 hybrid path is exercised too: the
+    keyword leg must build from the stored texts and rank ``a.txt`` first for
+    its own terms.
     """
 
     docs = tmp_path / "docs"
@@ -109,6 +133,19 @@ def run_backend_scenario(
     assert results[0]["score"] == pytest.approx(1.0, abs=score_abs)
     assert results[0]["metadata"]["path"].endswith("a.txt")
     assert paths_of(results) == {"a.txt", "b.txt"}
+
+    # -- MMR readiness: retrieve_ex must return hit embeddings ----------------
+    with_emb = _retrieve_ex(make_accessor, ALPHA, k=2, with_embeddings=True)
+    assert len(with_emb) == 2
+    assert all(
+        isinstance(h.get("embedding"), list) and h["embedding"] for h in with_emb
+    ), "with_embeddings=True must return the stored vector for MMR"
+
+    # -- in-process BM25 hybrid (when the backend supports it) ----------------
+    if make_hybrid_accessor is not None:
+        fused = _retrieve_ex(make_hybrid_accessor, ALPHA, k=2, query_text=ALPHA)
+        assert paths_of(fused) == {"a.txt", "b.txt"}
+        assert fused[0]["metadata"]["path"].endswith("a.txt")
 
     # -- pass 2: deleting b.txt removes its vectors (snapshot semantics) ------
     (docs / "b.txt").unlink()

@@ -7,18 +7,31 @@ Assumes the indexer wrote chunks into a Milvus collection with fields ``text``
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
 from serviette.server.accessors.abstract import AsyncVectorAccessor
+from serviette.server.hybrid import KeywordHybridMixin
 
 
-class MilvusAccessor(AsyncVectorAccessor):
+def _entity_metadata(entity: dict) -> dict[str, Any]:
+    metadata = entity.get("metadata", {})
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata)
+    return metadata or {}
+
+
+class MilvusAccessor(KeywordHybridMixin, AsyncVectorAccessor):
+    supports_embeddings = True
+
     def __init__(self, config) -> None:
         self._uri = config.resolved_uri()
         self._token = config.token
         self._collection = config.collection
         self._client = None
+        self._scan_client = None
+        self._init_hybrid(config)
 
     async def _ensure_client(self):
         if self._client is None:
@@ -33,37 +46,102 @@ class MilvusAccessor(AsyncVectorAccessor):
         return self._client
 
     async def retrieve(self, embedding: list[float], k: int) -> list[dict[str, Any]]:
+        return await self.retrieve_ex(embedding, k)
+
+    async def retrieve_ex(
+        self,
+        embedding: list[float],
+        k: int,
+        *,
+        query_text: str | None = None,
+        with_embeddings: bool = False,
+    ) -> list[dict[str, Any]]:
         client = await self._ensure_client()
+        output_fields = ["text", "metadata"]
+        if with_embeddings:
+            output_fields.append("embedding")
         hits = await client.search(
             collection_name=self._collection,
             data=[embedding],
             limit=k,
-            output_fields=["text", "metadata"],
+            output_fields=output_fields,
             search_params={"metric_type": "COSINE"},
         )
-        results: list[dict[str, Any]] = []
+        vector_hits: list[dict[str, Any]] = []
         # ``hits`` is a list (one entry per query vector) of lists of hits.
         for hit in hits[0] if hits else []:
             entity = hit.get("entity", hit)
-            metadata = entity.get("metadata", {})
-            if isinstance(metadata, str):
-                metadata = json.loads(metadata)
-            results.append(
-                {
-                    "text": entity.get("text", ""),
-                    "metadata": metadata or {},
-                    "score": float(hit.get("distance", hit.get("score", 0.0))),
-                }
-            )
-        return results
+            record: dict[str, Any] = {
+                "text": entity.get("text", ""),
+                "metadata": _entity_metadata(entity),
+                "score": float(hit.get("distance", hit.get("score", 0.0))),
+            }
+            if with_embeddings and entity.get("embedding") is not None:
+                record["embedding"] = [float(x) for x in entity["embedding"]]
+            vector_hits.append(record)
+        return await self._fuse(vector_hits, query_text, k, with_embeddings)
 
-    async def stats(self) -> dict[str, Any]:
+    # -- hybrid hooks (KeywordHybridMixin) ------------------------------------
+
+    async def _hybrid_count(self) -> int:
         client = await self._ensure_client()
         info = await client.get_collection_stats(self._collection)
         count = info.get("row_count") if isinstance(info, dict) else None
-        return {"chunks": int(count)} if count is not None else {}
+        return int(count or 0)
+
+    async def _hybrid_fetch_all(self, with_embeddings: bool) -> list[dict[str, Any]]:
+        # The async client has no full-scan iterator; a short-lived sync client
+        # paginates the whole collection off the event loop. ``query_iterator``
+        # sidesteps Milvus's offset+limit query window.
+        return await asyncio.to_thread(self._scan_all, with_embeddings)
+
+    def _sync_client(self):
+        if self._scan_client is None:
+            from pymilvus import MilvusClient
+
+            kwargs: dict[str, Any] = {"uri": self._uri}
+            if self._token:
+                kwargs["token"] = self._token
+            self._scan_client = MilvusClient(**kwargs)
+        return self._scan_client
+
+    def _scan_all(self, with_embeddings: bool) -> list[dict[str, Any]]:
+        client = self._sync_client()
+        fields = ["text", "metadata"]
+        if with_embeddings:
+            fields.append("embedding")
+        iterator = client.query_iterator(
+            collection_name=self._collection,
+            filter="",
+            output_fields=fields,
+            batch_size=1000,
+        )
+        hits: list[dict[str, Any]] = []
+        try:
+            while True:
+                batch = iterator.next()
+                if not batch:
+                    break
+                for entity in batch:
+                    hit: dict[str, Any] = {
+                        "text": entity.get("text", ""),
+                        "metadata": _entity_metadata(entity),
+                    }
+                    if with_embeddings and entity.get("embedding") is not None:
+                        hit["embedding"] = [float(x) for x in entity["embedding"]]
+                    hits.append(hit)
+        finally:
+            iterator.close()
+        return hits
+
+    async def stats(self) -> dict[str, Any]:
+        count = await self._hybrid_count()
+        return {"chunks": count}
 
     async def close(self) -> None:
         if self._client is not None:
             await self._client.close()
             self._client = None
+        if self._scan_client is not None:
+            self._scan_client.close()
+            self._scan_client = None

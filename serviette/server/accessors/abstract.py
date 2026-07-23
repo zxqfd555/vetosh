@@ -22,6 +22,11 @@ class AsyncVectorAccessor(ABC):
     not block the FastAPI event loop.
     """
 
+    # Whether ``retrieve_ex(..., with_embeddings=True)`` returns hit
+    # embeddings (needed by MMR). Backends that can cheaply return stored
+    # vectors flip this to True and honor the flag.
+    supports_embeddings = False
+
     @abstractmethod
     async def retrieve(self, embedding: list[float], k: int) -> list[dict[str, Any]]:
         """Return up to ``k`` results ordered by descending similarity.
@@ -29,6 +34,24 @@ class AsyncVectorAccessor(ABC):
         Each result is a dict ``{"text": str, "metadata": dict, "score": float}``
         where ``score`` is a cosine similarity in ``[-1, 1]`` (higher is closer).
         """
+
+    async def retrieve_ex(
+        self,
+        embedding: list[float],
+        k: int,
+        *,
+        query_text: str | None = None,
+        with_embeddings: bool = False,
+    ) -> list[dict[str, Any]]:
+        """:meth:`retrieve` with optional extras; the server always calls this.
+
+        ``query_text`` lets hybrid-capable backends run a keyword search next
+        to the vector one; ``with_embeddings`` asks for an ``"embedding"`` key
+        on each hit. The default implementation ignores both and delegates,
+        so plain backends need not change.
+        """
+
+        return await self.retrieve(embedding, k)
 
     @abstractmethod
     async def close(self) -> None:

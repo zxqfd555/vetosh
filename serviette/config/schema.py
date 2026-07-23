@@ -189,7 +189,23 @@ Source = Annotated[
 # ---------------------------------------------------------------------------
 
 
-class PgVectorConfig(BaseModel):
+class _HybridCapableConfig(BaseModel):
+    """Mixed into every backend whose accessor can run in-process BM25 hybrid.
+
+    ``hybrid`` fuses vector search with a BM25 keyword index built in-process
+    from the backend's stored texts (rebuilt when the row count changes) via
+    reciprocal-rank fusion — it helps entity-heavy queries (names, dates, IDs)
+    that embedding distance ranks poorly. In-process BM25 targets corpora up to
+    a few million chunks; above ``hybrid_max_chunks`` the keyword leg is skipped
+    with a warning and retrieval stays pure-vector. Native server-side keyword
+    search is the planned replacement at larger scale (see ROADMAP.md).
+    """
+
+    hybrid: bool = False
+    hybrid_max_chunks: int = Field(default=5_000_000, ge=1)
+
+
+class PgVectorConfig(_HybridCapableConfig):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["pgvector"] = "pgvector"
@@ -200,7 +216,7 @@ class PgVectorConfig(BaseModel):
     embedding_dimension: int | None = None
 
 
-class MilvusConfig(BaseModel):
+class MilvusConfig(_HybridCapableConfig):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["milvus"] = "milvus"
@@ -219,7 +235,7 @@ class MilvusConfig(BaseModel):
         return f"http://{self.host}:{self.port}"
 
 
-class DuckDbConfig(BaseModel):
+class DuckDbConfig(_HybridCapableConfig):
     """Embedded vector store backed by a local DuckDB database file.
 
     Zero-setup: no external service. The indexer writes through Pathway's native
@@ -242,7 +258,7 @@ class DuckDbConfig(BaseModel):
     table: str = "serviette_embeddings"
 
 
-class QdrantConfig(BaseModel):
+class QdrantConfig(_HybridCapableConfig):
     """Qdrant backend. The indexer writes via ``pw.io.qdrant`` (gRPC); the
     server queries via the REST/HTTP API. The collection is auto-created on
     first write (cosine metric) if it does not exist."""
@@ -266,7 +282,7 @@ class QdrantConfig(BaseModel):
         return f"{scheme}://{self.host}:{self.grpc_port}"
 
 
-class ChromaConfig(BaseModel):
+class ChromaConfig(_HybridCapableConfig):
     """ChromaDB backend (HTTP client/server mode). The **collection must
     already exist** (created with the cosine ``hnsw:space``); the connector
     never creates it."""
@@ -283,7 +299,7 @@ class ChromaConfig(BaseModel):
     collection: str = "serviette_embeddings"
 
 
-class WeaviateConfig(BaseModel):
+class WeaviateConfig(_HybridCapableConfig):
     """Weaviate backend. The **collection must already exist**. The indexer
     writes over HTTP; the server's v4 client also needs the gRPC port."""
 
@@ -316,9 +332,14 @@ class PineconeConfig(BaseModel):
     embedding_dimension: int | None = None
     cloud: str = "aws"
     region: str = "us-east-1"
+    # In-process BM25 hybrid is NOT available on Pinecone: it has no
+    # scan-all-vectors API, so the keyword corpus cannot be built server-side.
+    # Setting this raises a clear error at startup. Native hybrid needs a
+    # second (sparse) index fed by the indexer — planned, see ROADMAP.md.
+    hybrid: bool = False
 
 
-class MongoDbConfig(BaseModel):
+class MongoDbConfig(_HybridCapableConfig):
     """MongoDB Atlas Vector Search backend. The indexer writes documents in
     snapshot mode via ``pw.io.mongodb``; create an Atlas ``vectorSearch`` index
     (named ``vector_index`` by default) on the ``embedding`` path with
@@ -370,6 +391,42 @@ class EmbedderConfig(BaseModel):
     type: str = "openai"
     model: str | None = None
     api_key: str | None = None
+    # Asymmetric-retrieval prefixes (e5, bge & co): prepended to the text
+    # right before embedding — ``document_prefix`` on the indexer side,
+    # ``query_prefix`` on the server side. Stored chunk text stays clean.
+    # Leave empty for symmetric models.
+    query_prefix: str = ""
+    document_prefix: str = ""
+
+
+class RerankerConfig(BaseModel):
+    """Optional second-stage reranker for retrieval.
+
+    When configured, the server fetches ``candidates`` nearest chunks from the
+    vector index, scores each (query, chunk) pair, and returns the top ``k``
+    by that score. Two scorers are available:
+
+    - ``cross_encoder`` (default): a local sentence-transformers cross-encoder
+      reads the query and the chunk *together*, so it catches matches that
+      embedding distance ranks poorly — at the cost of one model call per
+      candidate, which is why it runs on a shortlist and not on the whole
+      index. The default model is local, free and keyless.
+    - ``llm``: pointwise LLM scoring (each chunk rated 0–5 for relevance to
+      the query, in the spirit of ``pathway.xpacks.llm.rerankers.LLMReranker``).
+      Costs one cheap LLM call per candidate; ``model``/``api_key`` default to
+      the top-level ``llm`` section.
+
+    Note: pointwise rerankers optimize per-chunk relevance to the *whole*
+    question and can push out chunks needed for other hops of a multi-hop
+    question — for those, prefer ``rag.decompose`` / ``rag.mmr``.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str = "cross_encoder"
+    model: str | None = None  # cross_encoder: ms-marco-MiniLM-L-6-v2; llm: llm section's
+    api_key: str | None = None  # llm type only; defaults to the llm section's
+    candidates: int = Field(default=30, ge=1)
 
 
 class SplitterConfig(BaseModel):
@@ -388,6 +445,73 @@ class LLMConfig(BaseModel):
     type: str = "openai"
     model: str | None = None
     api_key: str | None = None
+
+
+class AdaptiveRagConfig(BaseModel):
+    """Adaptive RAG (Pathway research; cf. ``AdaptiveRAGQuestionAnswerer``).
+
+    ``/rag`` first answers from the requested ``k`` chunks; when the LLM
+    replies that the context is insufficient (detected via
+    ``no_answer_string``), the context is grown by ``factor`` and the question
+    re-asked, up to ``max_iterations`` attempts total. Simple questions stay
+    cheap; hard multi-hop ones get a larger context only when needed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    factor: int = Field(default=2, ge=2)
+    max_iterations: int = Field(default=4, ge=1)
+    # The exact marker the LLM is instructed to reply with when the context
+    # does not contain the answer. Detected as a substring of the reply.
+    no_answer_string: str = "No information found"
+
+
+class DecomposeConfig(BaseModel):
+    """Multi-query retrieval for multi-hop questions.
+
+    One LLM call splits the question into standalone sub-queries ("mother of
+    the 15th first lady?", "second assassinated president?"); retrieval runs
+    for the original question and every sub-query, and the result lists are
+    fused with reciprocal-rank fusion. This keeps chunks of *different* hops
+    from competing for the same top-k slots. Requires the ``llm`` section.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_subqueries: int = Field(default=4, ge=2, le=10)
+
+
+class MmrConfig(BaseModel):
+    """Maximal-marginal-relevance diversification of retrieval results.
+
+    The server fetches ``candidates`` chunks and greedily selects ``k`` of
+    them, trading relevance against similarity to the already-selected set:
+    ``diversity`` is the weight of the redundancy penalty (0 = plain top-k,
+    1 = ignore relevance). Needs hit embeddings, so the backend must support
+    returning them (DuckDB for now).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidates: int = Field(default=20, ge=1)
+    diversity: float = Field(default=0.3, ge=0.0, le=1.0)
+
+
+class RagConfig(BaseModel):
+    """Optional retrieval-quality strategies for ``/retrieve`` and ``/rag``.
+
+    All are opt-in and composable: ``decompose`` widens *what* is retrieved,
+    ``mmr`` diversifies *which* candidates survive, ``adaptive`` retries with
+    a larger context when the answer is not found (``/rag`` only; ``decompose``
+    and ``mmr`` also apply to ``/retrieve``, though ``decompose`` needs an
+    ``llm`` section either way).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    adaptive: AdaptiveRagConfig | None = None
+    decompose: DecomposeConfig | None = None
+    mmr: MmrConfig | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +633,8 @@ class ServietteConfig(BaseModel):
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     llm: LLMConfig | None = None
+    reranker: RerankerConfig | None = None
+    rag: RagConfig | None = None
     frontend: FrontendConfig | None = None
 
     # -- per-component requirements -------------------------------------------

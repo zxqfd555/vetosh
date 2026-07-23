@@ -153,6 +153,38 @@ def test_indexer_writes_and_accessor_retrieves(pgvector_dsn, tmp_path):
     assert results[0]["score"] == pytest.approx(1.0, abs=1e-4)
     assert results[0]["metadata"]["path"].endswith("a.txt")
 
+    # MMR readiness: retrieve_ex must return the stored vectors.
+    async def retrieve_mmr():
+        accessor = PgVectorAccessor(
+            PgVectorConfig(connection_string=pgvector_dsn, table=TABLE)
+        )
+        try:
+            return await accessor.retrieve_ex(
+                fake_embedding(alpha), 2, with_embeddings=True
+            )
+        finally:
+            await accessor.close()
+
+    mmr_hits = asyncio.run(retrieve_mmr())
+    assert all(
+        isinstance(h.get("embedding"), list) and h["embedding"] for h in mmr_hits
+    )
+
+    # In-process BM25 hybrid: the keyword leg builds from the stored texts.
+    async def retrieve_hybrid():
+        accessor = PgVectorAccessor(
+            PgVectorConfig(connection_string=pgvector_dsn, table=TABLE, hybrid=True)
+        )
+        try:
+            return await accessor.retrieve_ex(
+                fake_embedding(alpha), 2, query_text=alpha
+            )
+        finally:
+            await accessor.close()
+
+    fused = asyncio.run(retrieve_hybrid())
+    assert {Path(h["metadata"]["path"]).name for h in fused} == {"a.txt", "b.txt"}
+
 
 def test_deletion_removes_rows(pgvector_dsn, tmp_path):
     docs = tmp_path / "docs"

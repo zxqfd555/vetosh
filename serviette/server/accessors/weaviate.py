@@ -12,12 +12,32 @@ import json
 from typing import Any
 
 from serviette.server.accessors.abstract import AsyncVectorAccessor
+from serviette.server.hybrid import KeywordHybridMixin
 
 
-class WeaviateAccessor(AsyncVectorAccessor):
+def _props_to_hit(props: dict) -> dict[str, Any]:
+    props = props or {}
+    raw = props.get("metadata")
+    metadata = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    return {"text": props.get("text", ""), "metadata": metadata}
+
+
+def _object_vector(obj) -> list[float] | None:
+    # v4 returns named vectors as a dict; the default (unnamed) vector lives
+    # under the "default" key.
+    vector = getattr(obj, "vector", None)
+    if isinstance(vector, dict):
+        vector = vector.get("default")
+    return [float(x) for x in vector] if vector else None
+
+
+class WeaviateAccessor(KeywordHybridMixin, AsyncVectorAccessor):
+    supports_embeddings = True
+
     def __init__(self, config) -> None:
         self._config = config
         self._client = None
+        self._init_hybrid(config)
 
     async def _ensure_client(self):
         if self._client is None:
@@ -43,6 +63,16 @@ class WeaviateAccessor(AsyncVectorAccessor):
         return self._client
 
     async def retrieve(self, embedding: list[float], k: int) -> list[dict[str, Any]]:
+        return await self.retrieve_ex(embedding, k)
+
+    async def retrieve_ex(
+        self,
+        embedding: list[float],
+        k: int,
+        *,
+        query_text: str | None = None,
+        with_embeddings: bool = False,
+    ) -> list[dict[str, Any]]:
         client = await self._ensure_client()
         from weaviate.classes.query import MetadataQuery
 
@@ -50,29 +80,45 @@ class WeaviateAccessor(AsyncVectorAccessor):
         response = await collection.query.near_vector(
             near_vector=list(map(float, embedding)),
             limit=k,
+            include_vector=with_embeddings,
             return_metadata=MetadataQuery(distance=True),
         )
-        results: list[dict[str, Any]] = []
+        vector_hits: list[dict[str, Any]] = []
         for obj in response.objects:
-            props = obj.properties or {}
-            raw = props.get("metadata")
-            metadata = json.loads(raw) if isinstance(raw, str) else (raw or {})
             distance = obj.metadata.distance if obj.metadata else None
-            results.append(
-                {
-                    "text": props.get("text", ""),
-                    "metadata": metadata,
-                    "score": 1.0 - float(distance) if distance is not None else 0.0,
-                }
-            )
-        return results
+            hit = _props_to_hit(obj.properties)
+            hit["score"] = 1.0 - float(distance) if distance is not None else 0.0
+            if with_embeddings:
+                vec = _object_vector(obj)
+                if vec is not None:
+                    hit["embedding"] = vec
+            vector_hits.append(hit)
+        return await self._fuse(vector_hits, query_text, k, with_embeddings)
 
-    async def stats(self) -> dict[str, Any]:
+    # -- hybrid hooks (KeywordHybridMixin) ------------------------------------
+
+    async def _hybrid_count(self) -> int:
         client = await self._ensure_client()
         collection = client.collections.get(self._config.collection)
         result = await collection.aggregate.over_all(total_count=True)
-        count = result.total_count
-        return {"chunks": int(count)} if count is not None else {}
+        return int(result.total_count or 0)
+
+    async def _hybrid_fetch_all(self, with_embeddings: bool) -> list[dict[str, Any]]:
+        client = await self._ensure_client()
+        collection = client.collections.get(self._config.collection)
+        hits: list[dict[str, Any]] = []
+        # Cursor-based full scan (server-paged), the v4 way to read every object.
+        async for obj in collection.iterator(include_vector=with_embeddings):
+            hit = _props_to_hit(obj.properties)
+            if with_embeddings:
+                vec = _object_vector(obj)
+                if vec is not None:
+                    hit["embedding"] = vec
+            hits.append(hit)
+        return hits
+
+    async def stats(self) -> dict[str, Any]:
+        return {"chunks": await self._hybrid_count()}
 
     async def close(self) -> None:
         if self._client is not None:

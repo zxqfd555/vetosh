@@ -22,6 +22,7 @@ import logging
 from typing import Any
 
 from serviette.server.accessors.abstract import AsyncVectorAccessor, IndexNotReadyError
+from serviette.server.hybrid import KeywordHybridMixin
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +34,38 @@ _LOCK_HINT = (
 )
 
 
-class DuckDbAccessor(AsyncVectorAccessor):
+class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
+    supports_embeddings = True
+
     def __init__(self, config) -> None:
         self._path = config.path
         self._table = config.table
+        self._init_hybrid(config)
 
     async def retrieve(self, embedding: list[float], k: int) -> list[dict[str, Any]]:
         # DuckDB's Python API is synchronous; run the query off the event loop.
         return await asyncio.to_thread(self._query, embedding, k)
+
+    async def retrieve_ex(
+        self,
+        embedding: list[float],
+        k: int,
+        *,
+        query_text: str | None = None,
+        with_embeddings: bool = False,
+    ) -> list[dict[str, Any]]:
+        vector_hits = await asyncio.to_thread(
+            self._query, embedding, k, with_embeddings=with_embeddings
+        )
+        return await self._fuse(vector_hits, query_text, k, with_embeddings)
+
+    # -- hybrid hooks (KeywordHybridMixin) ------------------------------------
+
+    async def _hybrid_count(self) -> int:
+        return await asyncio.to_thread(self._count_rows)
+
+    async def _hybrid_fetch_all(self, with_embeddings: bool) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._fetch_all_rows, with_embeddings)
 
     # A writer flushing with detach_between_batches holds the lock only
     # briefly; ride out that window before declaring the file unreachable.
@@ -70,14 +95,18 @@ class DuckDbAccessor(AsyncVectorAccessor):
         logger.error(_LOCK_HINT, self._path)
         raise RuntimeError(_LOCK_HINT % (self._path,)) from last_exc
 
-    def _query(self, embedding: list[float], k: int) -> list[dict[str, Any]]:
+    def _query(
+        self, embedding: list[float], k: int, *, with_embeddings: bool = False
+    ) -> list[dict[str, Any]]:
         import duckdb
 
+        embedding_col = ", embedding" if with_embeddings else ""
         conn = self._connect_with_retry()
         try:
             rows = conn.execute(
                 f"SELECT text, metadata, "
-                f"  list_cosine_similarity(embedding, ?::DOUBLE[]) AS score "
+                f"  list_cosine_similarity(embedding, ?::DOUBLE[]) AS score"
+                f"{embedding_col} "
                 f'FROM "{self._table}" '
                 f"WHERE embedding IS NOT NULL "
                 f"ORDER BY score DESC NULLS LAST LIMIT ?",
@@ -91,17 +120,56 @@ class DuckDbAccessor(AsyncVectorAccessor):
         finally:
             conn.close()
         results: list[dict[str, Any]] = []
-        for text, metadata, score in rows:
+        for text, metadata, score, *rest in rows:
             if isinstance(metadata, str):
                 metadata = json.loads(metadata)
-            results.append(
-                {
-                    "text": text,
-                    "metadata": metadata or {},
-                    "score": float(score) if score is not None else 0.0,
-                }
-            )
+            hit: dict[str, Any] = {
+                "text": text,
+                "metadata": metadata or {},
+                "score": float(score) if score is not None else 0.0,
+            }
+            if with_embeddings:
+                hit["embedding"] = [float(x) for x in rest[0]]
+            results.append(hit)
         return results
+
+    def _count_rows(self) -> int:
+        conn = self._connect_with_retry()
+        try:
+            (count,) = conn.execute(
+                f'SELECT count(*) FROM "{self._table}" WHERE embedding IS NOT NULL'
+            ).fetchone()
+        finally:
+            conn.close()
+        return int(count)
+
+    def _fetch_all_rows(self, with_embeddings: bool) -> list[dict[str, Any]]:
+        """Every stored chunk as a BM25 hit dict (read off the event loop).
+
+        Read through the same retrying read-only connections as vector search;
+        the mixin rebuilds the BM25 index only when the row count changes —
+        fine for the static/slow-moving corpora the embedded backend targets.
+        """
+
+        embedding_col = ", embedding" if with_embeddings else ""
+        conn = self._connect_with_retry()
+        try:
+            rows = conn.execute(
+                f'SELECT text, metadata{embedding_col} FROM "{self._table}" '
+                f"WHERE embedding IS NOT NULL"
+            ).fetchall()
+        finally:
+            conn.close()
+        hits = []
+        for row in rows:
+            text, metadata = row[0], row[1]
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+            hit: dict[str, Any] = {"text": text, "metadata": metadata or {}}
+            if with_embeddings:
+                hit["embedding"] = [float(x) for x in row[2]]
+            hits.append(hit)
+        return hits
 
     async def stats(self) -> dict[str, Any]:
         return await asyncio.to_thread(self._stats)

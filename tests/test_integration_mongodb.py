@@ -102,4 +102,7 @@ def test_mongodb_scenario(mongodb_uri, tmp_path):
         lambda: MongoDbAccessor(MongoDbConfig(**vdb)),
         after_index=lambda: _wait_search_synced(mongodb_uri),
         score_abs=1e-3,  # ANN + score renormalization
+        make_hybrid_accessor=lambda: MongoDbAccessor(
+            MongoDbConfig(**{**vdb, "hybrid": True})
+        ),
     )

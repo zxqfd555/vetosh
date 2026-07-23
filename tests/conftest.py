@@ -30,8 +30,13 @@ class MockServerEmbedder:
 class MockLLM:
     """Mock implementing the server's :class:`AsyncLLM` protocol."""
 
-    async def complete(self, query: str, context: list[str]) -> str:
+    async def complete(
+        self, query: str, context: list[str], *, system_prompt: str | None = None
+    ) -> str:
         return f"Answer to {query!r} from {len(context)} source(s)."
+
+    async def raw(self, prompt: str) -> str:
+        return ""
 
     async def close(self) -> None:
         return None

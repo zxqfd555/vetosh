@@ -240,10 +240,20 @@ def build_xpack_embedder(cfg) -> pw.UDF:
     cache_strategy = pw.udfs.DefaultCache()
     extra = {
         k: v
-        for k, v in cfg.model_dump(exclude={"type", "model", "api_key"}).items()
+        for k, v in cfg.model_dump(
+            exclude={"type", "model", "api_key", "query_prefix", "document_prefix"}
+        ).items()
         if v is not None
     }
+    # ``retries: N`` opts into engine-level exponential backoff — the way to
+    # survive provider TPM limits on cheap API tiers, where the SDK's couple
+    # of quick retries give up long before the minute window resets.
+    retries = extra.pop("retries", None)
     common: dict[str, Any] = {"cache_strategy": cache_strategy, **extra}
+    if retries:
+        common["retry_strategy"] = pw.udfs.ExponentialBackoffRetryStrategy(
+            max_retries=int(retries)
+        )
     if cfg.model:
         common["model"] = cfg.model
 
@@ -276,9 +286,25 @@ def build_xpack_splitter(cfg):
 
     from pathway.xpacks.llm import splitters
 
+    class TailMergingTokenCountSplitter(splitters.TokenCountSplitter):
+        """TokenCountSplitter emits a trailing remainder even when it is far
+        below min_tokens; a title-ish tail line then becomes a near-empty
+        chunk that outranks real content. Fold such a tail into the previous
+        chunk instead (single-chunk texts are left untouched)."""
+
+        def chunk(
+            self, text: str, metadata: dict = {}, **kwargs
+        ) -> list[tuple[str, dict]]:
+            chunks = super().chunk(text, metadata, **kwargs)
+            if len(chunks) >= 2 and len(chunks[-1][0]) < 100:
+                text_prev, meta_prev = chunks[-2]
+                chunks[-2] = (text_prev.rstrip() + "\n" + chunks[-1][0], meta_prev)
+                chunks.pop()
+            return chunks
+
     if cfg.type in {"token_count", "tokencount"}:
         # TokenCountSplitter is token-based; map chunk_size -> max_tokens.
-        return splitters.TokenCountSplitter(max_tokens=cfg.chunk_size)
+        return TailMergingTokenCountSplitter(max_tokens=cfg.chunk_size)
     if cfg.type in {"recursive", "recursive_character"}:
         return splitters.RecursiveSplitter(
             chunk_size=cfg.chunk_size, chunk_overlap=cfg.chunk_overlap
@@ -384,6 +410,14 @@ def build_graph(
         chunk=split_text(pw.this.text),
     )
     exploded = chunked.flatten(pw.this.chunk)
+    # Asymmetric-retrieval models (e5, bge) want a marker prepended to the
+    # embedded text only; chunk_id and the stored text stay prefix-free.
+    doc_prefix = config.embedder.document_prefix
+    embed_input = (
+        pw.apply_with_type(lambda t, _p=doc_prefix: _p + t, str, pw.this.chunk)
+        if doc_prefix
+        else pw.this.chunk
+    )
     # Pathway reserves the column name "id", so the chunk's primary key lives in
     # "chunk_id"; the sinks map it to each backend's id/primary-key field.
     embedded = exploded.select(
@@ -391,7 +425,7 @@ def build_graph(
         text=pw.this.chunk,
         metadata=pw.this._metadata,
         metadata_json=pw.this.meta_json,
-        embedding=embedder(pw.this.chunk),
+        embedding=embedder(embed_input),
     )
 
     _write_sink(embedded, config)
@@ -528,18 +562,19 @@ def _write_duckdb(table: pw.Table, vdb) -> None:
 
 
 def _write_qdrant(table: pw.Table, vdb) -> None:
-    """Write points to Qdrant (auto-creates a cosine collection if missing).
+    """Write points to a pre-created Qdrant collection (schema-driven sink).
 
-    The sink keys points internally per row, so additions/updates/deletions
-    map to native upserts/deletes; the remaining columns (``chunk_id``,
-    ``text``, ``metadata``) become the point payload.
+    The sink keys points internally per row, so additions/updates/deletions map
+    to native upserts/deletes. It binds each of the collection's named vector
+    slots to the same-named table column: the ``embedding`` column feeds the
+    dense slot ``prepare._prepare_qdrant`` created; ``text`` and ``metadata``
+    are not vector slots, so they become the point payload.
     """
 
     pw.io.qdrant.write(
         table,
         vdb.grpc_url(),
         vdb.collection,
-        vector=table.embedding,
         api_key=vdb.api_key,
     )
 

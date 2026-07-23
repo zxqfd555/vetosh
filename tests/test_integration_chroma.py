@@ -57,4 +57,5 @@ def test_chroma_scenario(chroma_port, tmp_path):
         tmp_path,
         vdb,
         lambda: ChromaAccessor(ChromaConfig(**vdb)),
+        make_hybrid_accessor=lambda: ChromaAccessor(ChromaConfig(**{**vdb, "hybrid": True})),
     )

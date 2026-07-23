@@ -22,7 +22,17 @@ _DEFAULT_SYSTEM_PROMPT = (
 
 @runtime_checkable
 class AsyncLLM(Protocol):
-    async def complete(self, query: str, context: list[str]) -> str:
+    async def complete(
+        self, query: str, context: list[str], *, system_prompt: str | None = None
+    ) -> str:
+        ...
+
+    async def raw(self, prompt: str) -> str:
+        """One-shot completion with no RAG prompt scaffolding.
+
+        Used by retrieval-side helpers (query decomposition, LLM reranking)
+        that need the model, not the answer-from-context template.
+        """
         ...
 
     async def close(self) -> None:
@@ -42,7 +52,9 @@ class MockLLM:
     (e.g. ``openai``) for actual generated answers.
     """
 
-    async def complete(self, query: str, context: list[str]) -> str:
+    async def complete(
+        self, query: str, context: list[str], *, system_prompt: str | None = None
+    ) -> str:
         if not context:
             return (
                 "(mock LLM) No relevant context was retrieved for your question. "
@@ -57,6 +69,12 @@ class MockLLM:
             f'relevant one says:\n\n"{snippet}"\n\n'
             "Configure an `llm` of type `openai` for a real generated answer."
         )
+
+    async def raw(self, prompt: str) -> str:
+        # No model behind the scaffold; callers treat "" as "helper
+        # unavailable" and fall back (e.g. decomposition keeps the original
+        # query only).
+        return ""
 
     async def close(self) -> None:
         return None
@@ -77,14 +95,24 @@ class OpenAIChat:
             self._client = AsyncOpenAI(api_key=self._api_key, **self._client_kwargs)
         return self._client
 
-    async def complete(self, query: str, context: list[str]) -> str:
+    async def complete(
+        self, query: str, context: list[str], *, system_prompt: str | None = None
+    ) -> str:
         client = self._ensure_client()
         resp = await client.chat.completions.create(
             model=self._model,
             messages=[
-                {"role": "system", "content": _DEFAULT_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt or _DEFAULT_SYSTEM_PROMPT},
                 {"role": "user", "content": _build_prompt(query, context)},
             ],
+        )
+        return resp.choices[0].message.content or ""
+
+    async def raw(self, prompt: str) -> str:
+        client = self._ensure_client()
+        resp = await client.chat.completions.create(
+            model=self._model,
+            messages=[{"role": "user", "content": prompt}],
         )
         return resp.choices[0].message.content or ""
 

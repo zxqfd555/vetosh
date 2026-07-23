@@ -73,4 +73,7 @@ def test_weaviate_scenario(weaviate_ports, tmp_path):
         tmp_path,
         vdb,
         lambda: WeaviateAccessor(WeaviateConfig(**vdb)),
+        make_hybrid_accessor=lambda: WeaviateAccessor(
+            WeaviateConfig(**{**vdb, "hybrid": True})
+        ),
     )

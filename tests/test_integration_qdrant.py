@@ -1,7 +1,8 @@
 """Integration test: real indexer -> Qdrant (Docker) -> Qdrant accessor.
 
-The sink auto-creates the collection (cosine metric) on first write, so no
-schema setup is needed. Skips when Docker or ``qdrant-client`` is unavailable.
+The indexer's ``prepare`` step creates the collection with a named cosine
+dense slot (the schema-driven sink no longer auto-creates it), so no schema
+setup is needed here. Skips when Docker or ``qdrant-client`` is unavailable.
 """
 
 from __future__ import annotations

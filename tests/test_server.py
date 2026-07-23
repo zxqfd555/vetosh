@@ -183,3 +183,44 @@ def test_cors_opt_in_allowlist(store_path, mock_server_embedder):
             headers={"Origin": "https://evil.example"},
         )
         assert "access-control-allow-origin" not in foreign.headers
+
+
+class _ReverseReranker:
+    """Fake reranker: reverses the accessor order and stamps its own scores."""
+
+    def __init__(self):
+        self.seen_candidates = None
+
+    async def rerank(self, query, hits, k):
+        self.seen_candidates = len(hits)
+        reversed_hits = list(reversed(hits))[:k]
+        return [{**h, "score": float(len(reversed_hits) - i)} for i, h in enumerate(reversed_hits)]
+
+    async def close(self):
+        return None
+
+
+def test_reranker_reorders_and_gets_shortlist(store_path, mock_server_embedder):
+    from serviette.config.schema import RerankerConfig
+
+    config = ServietteConfig(
+        vector_db=DuckDbConfig(type="duckdb", path=str(store_path)),
+        embedder=EmbedderConfig(type="openai"),
+        reranker=RerankerConfig(candidates=3),
+    )
+    accessor = DuckDbAccessor(config.vector_db)
+    reranker = _ReverseReranker()
+    app = create_app(
+        config, embedder=mock_server_embedder, accessor=accessor, reranker=reranker
+    )
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/retrieve", json={"query": DOCS[0], "k": 2})
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 2
+    # The vector index would put DOCS[0] first; the reranker reversed the
+    # 3-candidate shortlist, so the top result is the *last* vector hit.
+    assert results[0]["text"] != DOCS[0]
+    assert reranker.seen_candidates == 3
+    scores = [r["score"] for r in results]
+    assert scores == sorted(scores, reverse=True)
